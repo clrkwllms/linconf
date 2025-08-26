@@ -30,6 +30,11 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") 'linconf-toggle-option)
     (define-key map (kbd "C-c C-s") 'linconf-search-option)
+    (define-key map (kbd "C-c y") 'linconf-set-y)
+    (define-key map (kbd "C-c m") 'linconf-set-m)
+    (define-key map (kbd "C-c s") 'linconf-set-string)
+    (define-key map (kbd "C-c n") 'linconf-set-number)
+    (define-key map (kbd "C-c u") 'linconf-unset-option)
     map)
   "Keymap for `linconf-mode'.")
 
@@ -73,6 +78,67 @@
     (if (re-search-forward (format "CONFIG_%s" option) nil t)
         (beginning-of-line)
       (message "Option CONFIG_%s not found" option))))
+
+(defun linconf-get-option-name ()
+  "Extract CONFIG option name from current line."
+  (save-excursion
+    (beginning-of-line)
+    (cond
+     ((looking-at "^# CONFIG_\\([A-Z0-9_]+\\) is not set")
+      (match-string 1))
+     ((looking-at "^CONFIG_\\([A-Z0-9_]+\\)=")
+      (match-string 1))
+     (t nil))))
+
+(defun linconf-set-option (option value)
+  "Set CONFIG option to value, replacing current line."
+  (when option
+    (delete-region (line-beginning-position) (line-end-position))
+    (if (null value)
+        (insert (format "# CONFIG_%s is not set" option))
+      (insert (format "CONFIG_%s=%s" option value)))))
+
+(defun linconf-set-y ()
+  "Set configuration option to 'y' (built-in)."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (linconf-set-option option "y")
+      (message "No configuration option found on this line"))))
+
+(defun linconf-set-m ()
+  "Set configuration option to 'm' (module)."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (linconf-set-option option "m")
+      (message "No configuration option found on this line"))))
+
+(defun linconf-set-string ()
+  "Set configuration option to a string value."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (let ((value (read-string (format "Set CONFIG_%s to string: " option))))
+          (linconf-set-option option (format "\"%s\"" value)))
+      (message "No configuration option found on this line"))))
+
+(defun linconf-set-number ()
+  "Set configuration option to a numeric value."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (let ((value (read-number (format "Set CONFIG_%s to number: " option))))
+          (linconf-set-option option (number-to-string value)))
+      (message "No configuration option found on this line"))))
+
+(defun linconf-unset-option ()
+  "Unset configuration option (set to 'is not set')."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (linconf-set-option option nil)
+      (message "No configuration option found on this line"))))
 
 ;;;###autoload
 (define-derived-mode linconf-mode fundamental-mode "LinConf"
