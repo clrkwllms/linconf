@@ -1,6 +1,6 @@
 ;;; linconf.el --- Linux Kernel Configuration Editor -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025
+;; Copyright (C) 2025 Clark Williams <clrkwllms@kernel.org>
 
 ;; Author: Generated with Claude Code
 ;; Version: 0.1.0
