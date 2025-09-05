@@ -166,29 +166,88 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
         (linconf-set-option option nil)
       (message "No configuration option found on this line"))))
 
+(defun linconf-detect-architecture (kernel-root)
+  "Detect the target architecture from kernel source tree."
+  ;; Try to detect architecture from common indicators
+  (let ((arch-dirs (directory-files (expand-file-name "arch" kernel-root) nil "^[^.]")))
+    (cond
+     ((member "x86" arch-dirs) "x86")
+     ((member "arm64" arch-dirs) "arm64")
+     ((member "arm" arch-dirs) "arm")
+     ((member "powerpc" arch-dirs) "powerpc")
+     ((member "riscv" arch-dirs) "riscv")
+     ((member "s390" arch-dirs) "s390")
+     (t "x86")))) ;; Default fallback
+
+(defun linconf-expand-kconfig-variables (path kernel-root)
+  "Expand Kconfig variables in PATH using KERNEL-ROOT context."
+  (let ((expanded-path path)
+        (arch (linconf-detect-architecture kernel-root)))
+    ;; Handle common kernel variables
+    (setq expanded-path (replace-regexp-in-string "\\$SRCARCH" arch expanded-path))
+    (setq expanded-path (replace-regexp-in-string "\\$ARCH" arch expanded-path))
+    (setq expanded-path (replace-regexp-in-string "\\$(srctree)/" "" expanded-path))
+    ;; Handle other common patterns
+    (setq expanded-path (replace-regexp-in-string "\\${srctree}/" "" expanded-path))
+    (setq expanded-path (replace-regexp-in-string "\\$\\(.*\\)" "\\1" expanded-path))
+    expanded-path))
+
+(defun linconf-expand-glob-pattern (pattern kernel-root)
+  "Expand glob PATTERN relative to KERNEL-ROOT, returning list of matching files."
+  (let ((expanded-pattern (linconf-expand-kconfig-variables pattern kernel-root)))
+    (if (string-match-p "[*?]" expanded-pattern)
+        ;; Has glob characters - expand them
+        (let ((full-pattern (expand-file-name expanded-pattern kernel-root)))
+          (file-expand-wildcards full-pattern))
+      ;; No glob characters - return single file if it exists
+      (let ((full-path (expand-file-name expanded-pattern kernel-root)))
+        (when (file-readable-p full-path)
+          (list full-path))))))
+
 (defun linconf-parse-source-directives (file kernel-root)
   "Parse source directives from Kconfig FILE, returning list of referenced files.
-KERNEL-ROOT is the kernel source tree root for resolving relative paths."
+KERNEL-ROOT is the kernel source tree root for resolving relative paths.
+Supports glob patterns and variable substitution."
   (when (and file (file-readable-p file))
     (with-temp-buffer
       (insert-file-contents file)
       (let ((sources '())
-            (file-dir (file-name-directory file)))
+            (file-dir (file-name-directory file))
+            (in-if-block nil)
+            (if-condition nil))
         (goto-char (point-min))
-        (while (re-search-forward "^\\s-*source\\s-+\"\\([^\"]+\\)\"" nil t)
-          (let* ((source-path (match-string 1))
-                 (full-path (cond
-                            ;; Absolute path
-                            ((file-name-absolute-p source-path)
-                             source-path)
-                            ;; Relative to kernel root
-                            ((string-match "^\\$" source-path)
-                             (expand-file-name (substring source-path 1) kernel-root))
-                            ;; Relative to current file
-                            (t
-                             (expand-file-name source-path file-dir)))))
-            (when (file-readable-p full-path)
-              (push full-path sources))))
+        (while (not (eobp))
+          (cond
+           ;; Handle if/endif blocks for conditional sourcing
+           ((looking-at "^\\s-*if\\s-+\\(.+\\)")
+            (setq in-if-block t
+                  if-condition (match-string 1))
+            (forward-line 1))
+           ((looking-at "^\\s-*endif")
+            (setq in-if-block nil
+                  if-condition nil)
+            (forward-line 1))
+           ;; Handle source directives
+           ((looking-at "^\\s-*source\\s-+\"\\([^\"]+\\)\"")
+            (let* ((source-path (match-string 1))
+                   (expanded-files
+                    (cond
+                     ;; Absolute path
+                     ((file-name-absolute-p source-path)
+                      (if (string-match-p "[*?]" source-path)
+                          (file-expand-wildcards source-path)
+                        (when (file-readable-p source-path)
+                          (list source-path))))
+                     ;; Relative to kernel root (most common case)
+                     (t
+                      (linconf-expand-glob-pattern source-path kernel-root)))))
+              ;; Add all expanded files
+              (dolist (expanded-file expanded-files)
+                (when (and expanded-file (file-readable-p expanded-file))
+                  (push expanded-file sources))))
+            (forward-line 1))
+           (t
+            (forward-line 1))))
         (nreverse sources)))))
 
 (defun linconf-collect-kconfig-files (kernel-root)
