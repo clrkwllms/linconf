@@ -265,8 +265,9 @@ Supports glob patterns and variable substitution."
               (setq queue (append queue sources)))))))
     (nreverse files)))
 
-(defun linconf-parse-kconfig-option (lines)
-  "Parse a single config option from LINES, return (name . plist)."
+(defun linconf-parse-kconfig-option (lines entry-type)
+  "Parse a single config option from LINES, return (name . plist).
+ENTRY-TYPE can be 'config, 'menuconfig, or 'choice."
   (let ((name nil)
         (type nil)
         (help nil)
@@ -275,72 +276,158 @@ Supports glob patterns and variable substitution."
         (default nil)
         (range nil)
         (choices nil)
-        (in-help nil))
+        (in-help nil)
+        (is-menuconfig (eq entry-type 'menuconfig)))
     (dolist (line lines)
       (cond
-       ((string-match "^config \\([A-Z0-9_]+\\)" line)
-        (setq name (match-string 1 line)))
-       ((string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)" line)
+       ;; Handle config or menuconfig declaration
+       ((string-match "^\\(menu\\)?config \\([A-Z0-9_]+\\)" line)
+        (setq name (match-string 2 line)))
+       ;; Handle type declarations
+       ((string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)\\(?: \"\\([^\"]*\\)\"\\)?" line)
         (setq type (intern (match-string 1 line))))
+       ;; Handle dependencies
        ((string-match "^[ \t]+depends on \\(.+\\)" line)
         (setq depends (match-string 1 line)))
+       ;; Handle selections
        ((string-match "^[ \t]+select \\([A-Z0-9_]+\\)" line)
         (push (match-string 1 line) select))
+       ;; Handle defaults
        ((string-match "^[ \t]+default \\(.+\\)" line)
         (setq default (match-string 1 line)))
+       ;; Handle ranges
        ((string-match "^[ \t]+range \\([0-9]+\\) \\([0-9]+\\)" line)
         (setq range (cons (string-to-number (match-string 1 line))
                           (string-to-number (match-string 2 line)))))
+       ;; Handle help text
        ((string-match "^[ \t]+help" line)
         (setq in-help t))
        ((and in-help (string-match "^[ \t]+\\(.+\\)" line))
         (setq help (if help
                        (concat help "\\n" (match-string 1 line))
                      (match-string 1 line))))
-       ((string-match "^choice" line)
-        (setq type 'choice))
-       ((and (eq type 'choice) (string-match "^[ \t]+config \\([A-Z0-9_]+\\)" line))
+       ;; Handle choice options (for choice blocks)
+       ((and (eq entry-type 'choice) (string-match "^[ \t]+config \\([A-Z0-9_]+\\)" line))
         (push (match-string 1 line) choices))))
     (when name
-      (cons name (list :type type
+      (cons name (list :type (if is-menuconfig 'menuconfig type)
                        :help help
                        :depends depends
                        :select (nreverse select)
                        :default default
                        :range range
-                       :choices (nreverse choices))))))
+                       :choices (nreverse choices)
+                       :menuconfig is-menuconfig)))))
 
 (defun linconf-parse-kconfig-file (file)
-  "Parse a single Kconfig file and return list of (name . plist) pairs."
+  "Parse a single Kconfig file and return list of (name . plist) pairs.
+Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
   (when (file-readable-p file)
     (with-temp-buffer
       (insert-file-contents file)
       (let ((lines (split-string (buffer-string) "\n"))
             (options '())
             (current-config '())
-            (in-config nil))
+            (current-choice '())
+            (choice-options '())
+            (in-config nil)
+            (in-choice nil)
+            (in-menu nil)
+            (menu-stack '())
+            (config-type 'config))
+        
         (dolist (line lines)
-          (cond
-           ((string-match "^config " line)
-            (when current-config
-              (let ((option (linconf-parse-kconfig-option (nreverse current-config))))
-                (when option
-                  (push option options))))
-            (setq current-config (list line)
-                  in-config t))
-           ((and in-config (string-match "^[ \t]+" line))
-            (push line current-config))
-           ((and in-config (not (string-match "^[ \t]*$" line)))
-            (when current-config
-              (let ((option (linconf-parse-kconfig-option (nreverse current-config))))
-                (when option
-                  (push option options))))
-            (setq current-config nil
-                  in-config nil))))
+          (let ((trimmed-line (string-trim line)))
+            (cond
+             ;; Handle menu start
+             ((string-match "^menu\\s-+\"\\([^\"]+\\)\"" line)
+              (push (match-string 1 line) menu-stack)
+              (setq in-menu t))
+             
+             ;; Handle menu end
+             ((string-match "^endmenu" line)
+              (when menu-stack
+                (pop menu-stack))
+              (setq in-menu (> (length menu-stack) 0)))
+             
+             ;; Handle choice start
+             ((string-match "^choice" line)
+              (when current-config
+                ;; Finish previous config
+                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                  (when option (push option options))))
+              (setq current-choice (list line)
+                    choice-options '()
+                    in-choice t
+                    current-config nil
+                    in-config nil))
+             
+             ;; Handle choice end
+             ((string-match "^endchoice" line)
+              (when current-choice
+                ;; Create a synthetic choice option
+                (let* ((choice-name (format "CHOICE_%d" (random 10000)))
+                       (choice-option (cons choice-name 
+                                           (list :type 'choice
+                                                 :choices choice-options
+                                                 :help "Choice group"))))
+                  (push choice-option options)))
+              (setq in-choice nil
+                    current-choice nil
+                    choice-options '()))
+             
+             ;; Handle config entries
+             ((string-match "^config[ \t]+\\([A-Z0-9_]+\\)" line)
+              (let ((config-name (match-string 1 line))) ; Save match immediately
+                (when current-config
+                  ;; Finish previous config
+                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                    (when option (push option options))))
+                (setq current-config (list line)
+                      in-config t
+                      config-type 'config)
+                (when in-choice
+                  (push config-name choice-options))))
+             
+             ;; Handle menuconfig entries
+             ((string-match "^menuconfig[ \t]+\\([A-Z0-9_]+\\)" line)
+              (let ((menuconfig-name (match-string 1 line))) ; Save match immediately
+                (when current-config
+                  ;; Finish previous config
+                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                    (when option (push option options))))
+                (setq current-config (list line)
+                      in-config t
+                      config-type 'menuconfig)))
+             
+             ;; Handle indented lines (part of current config/choice)
+             ((and (or in-config in-choice) (string-match "^[ \t]+" line))
+              (when current-config
+                (push line current-config)))
+             
+             ;; Handle non-indented, non-empty lines that end current config
+             ((and in-config (not (string-match "^[ \t]*$" line))
+                   (not (string-match "^\\(config\\|menuconfig\\|choice\\|endchoice\\|menu\\|endmenu\\|source\\|if\\|endif\\)" line)))
+              (when current-config
+                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                  (when option (push option options))))
+              (setq current-config nil
+                    in-config nil)))))
+        
+        ;; Handle any remaining config at end of file
         (when current-config
-          (let ((option (linconf-parse-kconfig-option (nreverse current-config))))
-            (when option
-              (push option options))))
+          (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+            (when option (push option options))))
+        
+        ;; Handle any remaining choice at end of file
+        (when current-choice
+          (let* ((choice-name (format "CHOICE_%d" (random 10000)))
+                 (choice-option (cons choice-name 
+                                     (list :type 'choice
+                                           :choices choice-options
+                                           :help "Choice group"))))
+            (push choice-option options)))
+        
         (nreverse options)))))
 
 (defun linconf-load-kconfig-data ()
