@@ -89,7 +89,7 @@
         (progn
           ;; Create test directory structure
           (make-directory (expand-file-name "drivers" temp-dir))
-          (make-directory (expand-file-name "arch/x86" temp-dir))
+          (make-directory (expand-file-name "arch/x86" temp-dir) t)
           
           ;; Create test Kconfig files with source directives
           (with-temp-file (expand-file-name "Kconfig" temp-dir)

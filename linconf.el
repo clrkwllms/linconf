@@ -189,7 +189,7 @@ KERNEL-ROOT is the kernel source tree root for resolving relative paths."
                              (expand-file-name source-path file-dir)))))
             (when (file-readable-p full-path)
               (push full-path sources))))
-        (nreverse sources))))
+        (nreverse sources)))))
 
 (defun linconf-collect-kconfig-files (kernel-root)
   "Collect all Kconfig files by following source directives from KERNEL-ROOT/Kconfig."
@@ -221,26 +221,26 @@ KERNEL-ROOT is the kernel source tree root for resolving relative paths."
       (cond
        ((string-match "^config \\([A-Z0-9_]+\\)" line)
         (setq name (match-string 1 line)))
-       ((string-match "^\\s-+\\(bool\\|tristate\\|string\\|int\\|hex\\)" line)
+       ((string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)" line)
         (setq type (intern (match-string 1 line))))
-       ((string-match "^\\s-+depends on \\(.+\\)" line)
+       ((string-match "^[ \t]+depends on \\(.+\\)" line)
         (setq depends (match-string 1 line)))
-       ((string-match "^\\s-+select \\([A-Z0-9_]+\\)" line)
+       ((string-match "^[ \t]+select \\([A-Z0-9_]+\\)" line)
         (push (match-string 1 line) select))
-       ((string-match "^\\s-+default \\(.+\\)" line)
+       ((string-match "^[ \t]+default \\(.+\\)" line)
         (setq default (match-string 1 line)))
-       ((string-match "^\\s-+range \\([0-9]+\\) \\([0-9]+\\)" line)
+       ((string-match "^[ \t]+range \\([0-9]+\\) \\([0-9]+\\)" line)
         (setq range (cons (string-to-number (match-string 1 line))
                           (string-to-number (match-string 2 line)))))
-       ((string-match "^\\s-+help" line)
+       ((string-match "^[ \t]+help" line)
         (setq in-help t))
-       ((and in-help (string-match "^\\s-+\\(.+\\)" line))
+       ((and in-help (string-match "^[ \t]+\\(.+\\)" line))
         (setq help (if help
                        (concat help "\\n" (match-string 1 line))
                      (match-string 1 line))))
        ((string-match "^choice" line)
         (setq type 'choice))
-       ((and (eq type 'choice) (string-match "^\\s-+config \\([A-Z0-9_]+\\)" line))
+       ((and (eq type 'choice) (string-match "^[ \t]+config \\([A-Z0-9_]+\\)" line))
         (push (match-string 1 line) choices))))
     (when name
       (cons name (list :type type
@@ -256,7 +256,7 @@ KERNEL-ROOT is the kernel source tree root for resolving relative paths."
   (when (file-readable-p file)
     (with-temp-buffer
       (insert-file-contents file)
-      (let ((lines (split-string (buffer-string) "\\n"))
+      (let ((lines (split-string (buffer-string) "\n"))
             (options '())
             (current-config '())
             (in-config nil))
@@ -269,9 +269,9 @@ KERNEL-ROOT is the kernel source tree root for resolving relative paths."
                   (push option options))))
             (setq current-config (list line)
                   in-config t))
-           ((and in-config (string-match "^\\s-+" line))
+           ((and in-config (string-match "^[ \t]+" line))
             (push line current-config))
-           ((and in-config (not (string-match "^\\s-*$" line)))
+           ((and in-config (not (string-match "^[ \t]*$" line)))
             (when current-config
               (let ((option (linconf-parse-kconfig-option (nreverse current-config))))
                 (when option
@@ -296,6 +296,8 @@ KERNEL-ROOT is the kernel source tree root for resolving relative paths."
           (total-options 0))
       (dolist (file kconfig-files)
         (let ((options (linconf-parse-kconfig-file file)))
+          (when (> (length options) 0)
+            (message "Found %d options in %s" (length options) file))
           (dolist (option options)
             (puthash (car option) (cdr option) linconf-kconfig-options)
             (setq total-options (1+ total-options)))))
