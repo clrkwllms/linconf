@@ -319,7 +319,7 @@ Returns list of (option . value) pairs that should be set."
               
               ;; Recursively resolve any chains from the selected option
               (let ((sub-changes (linconf-resolve-select-chains selected-option t visited)))
-                (setq changes (append sub-changes changes)))))))
+                (setq changes (append sub-changes changes)))))))))
     
     changes))
 
@@ -548,7 +548,7 @@ CONFIG-FILE defaults to linconf-config-file in the kernel source path."
       ;; Write to file
       (write-region (point-min) (point-max) config-path)
       (message "Wrote %d configuration options to %s" written-count config-path)
-      config-path)))
+      config-path))))
 
 (defun linconf-save-config ()
   "Save current configuration to .config file.
@@ -1040,7 +1040,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
                    (hash-table-count linconf-config-values))))
       
       (message "Loaded %d options from %d Kconfig files"
-               total-options (length kconfig-files))))))
+               total-options (length kconfig-files)))))
 
 ;;;###autoload
 (define-derived-mode linconf-mode fundamental-mode "linconf"
