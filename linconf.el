@@ -52,6 +52,9 @@ If nil, Kconfig validation will be disabled."
     (define-key map (kbd "C-c l") 'linconf-load-config-file)
     (define-key map (kbd "C-c w") 'linconf-save-config)
     (define-key map (kbd "C-c r") 'linconf-reload-config)
+    (define-key map (kbd "C-c v") 'linconf-validate-current-option)
+    (define-key map (kbd "C-c C-v") 'linconf-validate-all-options)
+    (define-key map (kbd "C-c h") 'linconf-set-hex)
     map)
   "Keymap for `linconf-mode'.")
 
@@ -82,26 +85,31 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
   "Font lock keywords for linconf mode.")
 
 (defun linconf-toggle-option ()
-  "Toggle a configuration option between enabled/disabled states."
+  "Toggle a configuration option between enabled/disabled states with type awareness."
   (interactive)
   (save-excursion
     (beginning-of-line)
     (cond
-     ;; Handle "# CONFIG_FOO is not set" -> "CONFIG_FOO=y"
+     ;; Handle "# CONFIG_FOO is not set" -> appropriate enabled state
      ((looking-at "^# CONFIG_\\([A-Z0-9_]+\\) is not set")
-      (let ((option (match-string 1)))
-        (delete-region (line-beginning-position) (line-end-position))
-        (insert (format "CONFIG_%s=y" option))))
+      (let* ((option (match-string 1))
+             (kconfig-info (gethash option linconf-kconfig-options))
+             (option-type (when kconfig-info (plist-get kconfig-info :type))))
+        (cond
+         ;; For tristate, enable as module by default
+         ((eq option-type 'tristate)
+          (linconf-set-option option "m" t))
+         ;; For all others, enable as built-in
+         (t
+          (linconf-set-option option "y" t)))))
      ;; Handle "CONFIG_FOO=y" -> "# CONFIG_FOO is not set"
      ((looking-at "^CONFIG_\\([A-Z0-9_]+\\)=y")
       (let ((option (match-string 1)))
-        (delete-region (line-beginning-position) (line-end-position))
-        (insert (format "# CONFIG_%s is not set" option))))
+        (linconf-set-option option nil t)))
      ;; Handle "CONFIG_FOO=m" -> "CONFIG_FOO=y"
      ((looking-at "^CONFIG_\\([A-Z0-9_]+\\)=m")
       (let ((option (match-string 1)))
-        (delete-region (line-beginning-position) (line-end-position))
-        (insert (format "CONFIG_%s=y" option))))
+        (linconf-set-option option "y" t)))
      (t (message "No configuration option found on this line")))))
 
 (defun linconf-search-option ()
@@ -124,22 +132,35 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
       (match-string 1))
      (t nil))))
 
-(defun linconf-set-option (option value)
-  "Set CONFIG option to value, replacing current line."
+(defun linconf-set-option (option value &optional force)
+  "Set CONFIG option to value, replacing current line with validation.
+If FORCE is t, skip validation. Returns t on success, nil on validation failure."
   (when option
-    (delete-region (line-beginning-position) (line-end-position))
-    (if (null value)
-        (insert (format "# CONFIG_%s is not set" option))
-      (insert (format "CONFIG_%s=%s" option value)))))
+    (let ((validation-result (if force
+                                (cons t nil)
+                              (linconf-validate-option-value option value))))
+      (if (car validation-result)
+          (progn
+            ;; Validation passed - set the option
+            (delete-region (line-beginning-position) (line-end-position))
+            (if (null value)
+                (insert (format "# CONFIG_%s is not set" option))
+              (insert (format "CONFIG_%s=%s" option value)))
+            ;; Show warning if there was one
+            (when (cdr validation-result)
+              (message "%s" (cdr validation-result)))
+            t)
+        ;; Validation failed - show error and don't change anything
+        (message "Validation failed for %s: %s" option (cdr validation-result))
+        nil))))
 
 (defun linconf-set-y ()
   "Set configuration option to 'y' (built-in)."
   (interactive)
   (let ((option (linconf-get-option-name)))
     (if option
-        (progn
-          (linconf-set-option option "y")
-          ;; Update internal config state and apply select chains
+        (when (linconf-set-option option "y")
+          ;; Update internal config state and apply select chains only on success
           (linconf-set-config-with-chains option t))
       (message "No configuration option found on this line"))))
 
@@ -148,14 +169,13 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
   (interactive)
   (let ((option (linconf-get-option-name)))
     (if option
-        (progn
-          (linconf-set-option option "m")
-          ;; Update internal config state and apply select chains
+        (when (linconf-set-option option "m")
+          ;; Update internal config state and apply select chains only on success
           (linconf-set-config-with-chains option 'module))
       (message "No configuration option found on this line"))))
 
 (defun linconf-set-string ()
-  "Set configuration option to a string value."
+  "Set configuration option to a string value with validation."
   (interactive)
   (let ((option (linconf-get-option-name)))
     (if option
@@ -164,7 +184,7 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
       (message "No configuration option found on this line"))))
 
 (defun linconf-set-number ()
-  "Set configuration option to a numeric value."
+  "Set configuration option to a numeric value with validation."
   (interactive)
   (let ((option (linconf-get-option-name)))
     (if option
@@ -173,14 +193,197 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
       (message "No configuration option found on this line"))))
 
 (defun linconf-unset-option ()
-  "Unset configuration option (set to 'is not set')."
+  "Unset configuration option (set to 'is not set') with validation."
   (interactive)
   (let ((option (linconf-get-option-name)))
     (if option
-        (progn
-          (linconf-set-option option nil)
-          ;; Update internal config state (this may trigger warnings about reverse deps)
+        (when (linconf-set-option option nil)
+          ;; Update internal config state only on success
           (linconf-set-config-with-chains option nil))
+      (message "No configuration option found on this line"))))
+
+(defun linconf-validate-option-value (option value)
+  "Validate VALUE for configuration OPTION based on its Kconfig type.
+Returns (valid . error-message) where valid is t/nil and error-message explains validation failure."
+  (let* ((kconfig-info (gethash option linconf-kconfig-options))
+         (option-type (when kconfig-info (plist-get kconfig-info :type)))
+         (option-range (when kconfig-info (plist-get kconfig-info :range))))
+
+    (if (not kconfig-info)
+        ;; No Kconfig info - allow any value but warn
+        (cons t (format "Warning: No Kconfig definition found for %s" option))
+
+      ;; Validate based on option type
+      (cond
+       ((eq option-type 'bool)
+        (linconf-validate-bool-value value))
+       ((eq option-type 'tristate)
+        (linconf-validate-tristate-value value))
+       ((eq option-type 'string)
+        (linconf-validate-string-value value))
+       ((eq option-type 'int)
+        (linconf-validate-int-value value option-range))
+       ((eq option-type 'hex)
+        (linconf-validate-hex-value value option-range))
+       (t
+        (cons t nil)))))) ; Unknown type - allow
+
+(defun linconf-validate-bool-value (value)
+  "Validate VALUE for bool option. Returns (valid . error-message)."
+  (cond
+   ((member value '("y" "n" nil)) (cons t nil))
+   (t (cons nil "Boolean options only accept 'y' or 'n' (or unset)"))))
+
+(defun linconf-validate-tristate-value (value)
+  "Validate VALUE for tristate option. Returns (valid . error-message)."
+  (cond
+   ((member value '("y" "m" "n" nil)) (cons t nil))
+   (t (cons nil "Tristate options only accept 'y', 'm', 'n' (or unset)"))))
+
+(defun linconf-validate-string-value (value)
+  "Validate VALUE for string option. Returns (valid . error-message)."
+  (cond
+   ((null value) (cons t nil)) ; Unset string is valid
+   ((and (stringp value)
+         (or (not (string-match "\"" value))  ; No quotes (will be added)
+             (and (string-prefix-p "\"" value) ; Or properly quoted
+                  (string-suffix-p "\"" value)
+                  (= (length (split-string value "\"")) 3)))) ; Exactly 2 quotes
+    (cons t nil))
+   (t (cons nil "String values should not contain unescaped quotes"))))
+
+(defun linconf-validate-int-value (value range)
+  "Validate VALUE for int option with optional RANGE. Returns (valid . error-message)."
+  (cond
+   ((null value) (cons t nil)) ; Unset int is valid
+   ((not (string-match "^[0-9]+$" value))
+    (cons nil "Integer values must be numeric"))
+   (range
+    (let ((num-value (string-to-number value))
+          (min-val (car range))
+          (max-val (cdr range)))
+      (if (and (>= num-value min-val) (<= num-value max-val))
+          (cons t nil)
+        (cons nil (format "Integer value %s outside valid range [%d-%d]"
+                         value min-val max-val)))))
+   (t (cons t nil))))
+
+(defun linconf-validate-hex-value (value range)
+  "Validate VALUE for hex option with optional RANGE. Returns (valid . error-message)."
+  (cond
+   ((null value) (cons t nil)) ; Unset hex is valid
+   ((not (string-match "^\\(0x\\)?[0-9a-fA-F]+$" value))
+    (cons nil "Hex values must be in format '0x123' or '123' (hex digits only)"))
+   (range
+    (let* ((clean-value (if (string-prefix-p "0x" value)
+                           (substring value 2) value))
+           (num-value (string-to-number clean-value 16))
+           (min-val (car range))
+           (max-val (cdr range)))
+      (if (and (>= num-value min-val) (<= num-value max-val))
+          (cons t nil)
+        (cons nil (format "Hex value %s outside valid range [0x%x-0x%x]"
+                         value min-val max-val)))))
+   (t (cons t nil))))
+
+(defun linconf-validate-current-option ()
+  "Validate the option on the current line and show result."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (save-excursion
+          (beginning-of-line)
+          (let ((line (buffer-substring-no-properties
+                      (line-beginning-position) (line-end-position)))
+                (value nil))
+            ;; Extract current value
+            (cond
+             ((string-match "^# CONFIG_[A-Z0-9_]+ is not set" line)
+              (setq value nil))
+             ((string-match "^CONFIG_[A-Z0-9_]+=\\(.+\\)" line)
+              (setq value (match-string 1 line))))
+
+            ;; Validate and report
+            (let ((result (linconf-validate-option-value option value)))
+              (if (car result)
+                  (message "✓ %s: Valid%s" option
+                          (if (cdr result) (format " (%s)" (cdr result)) ""))
+                (message "✗ %s: %s" option (cdr result))))))
+      (message "No configuration option found on this line"))))
+
+(defun linconf-validate-all-options ()
+  "Validate all options in the current buffer and report errors."
+  (interactive)
+  (let ((errors '())
+        (warnings '())
+        (valid-count 0))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties
+                    (line-beginning-position) (line-end-position))))
+          (when (string-match "^\\(?:# \\)?CONFIG_\\([A-Z0-9_]+\\)" line)
+            (let* ((option (match-string 1 line))
+                   (value (cond
+                          ((string-match "^# CONFIG_[A-Z0-9_]+ is not set" line) nil)
+                          ((string-match "^CONFIG_[A-Z0-9_]+=\\(.+\\)" line)
+                           (match-string 1 line))))
+                   (result (linconf-validate-option-value option value)))
+              (if (car result)
+                  (progn
+                    (setq valid-count (1+ valid-count))
+                    (when (cdr result)
+                      (push (format "Line %d: %s" (line-number-at-pos) (cdr result)) warnings)))
+                (push (format "Line %d: %s: %s"
+                             (line-number-at-pos) option (cdr result)) errors)))))
+        (forward-line 1)))
+
+    ;; Report results
+    (with-current-buffer (get-buffer-create "*LinConf Validation*")
+      (erase-buffer)
+      (insert (format "LinConf Configuration Validation Report\n"))
+      (insert (format "======================================\n\n"))
+      (insert (format "Valid options: %d\n" valid-count))
+      (insert (format "Errors: %d\n" (length errors)))
+      (insert (format "Warnings: %d\n\n" (length warnings)))
+
+      (when errors
+        (insert "ERRORS:\n")
+        (dolist (error errors)
+          (insert (format "  • %s\n" error)))
+        (insert "\n"))
+
+      (when warnings
+        (insert "WARNINGS:\n")
+        (dolist (warning warnings)
+          (insert (format "  • %s\n" warning)))
+        (insert "\n"))
+
+      (when (and (= (length errors) 0) (= (length warnings) 0))
+        (insert "✓ All configuration options are valid!\n"))
+
+      (goto-char (point-min)))
+
+    (display-buffer "*LinConf Validation*")
+    (message "Validation complete: %d valid, %d errors, %d warnings"
+             valid-count (length errors) (length warnings))))
+
+(defun linconf-set-hex ()
+  "Set configuration option to a hex value with validation."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (let* ((kconfig-info (gethash option linconf-kconfig-options))
+               (option-range (when kconfig-info (plist-get kconfig-info :range)))
+               (prompt (if option-range
+                          (format "Set CONFIG_%s to hex (range 0x%x-0x%x): "
+                                 option (car option-range) (cdr option-range))
+                        (format "Set CONFIG_%s to hex value: " option)))
+               (value (read-string prompt)))
+          ;; Ensure 0x prefix
+          (unless (string-prefix-p "0x" value)
+            (setq value (concat "0x" value)))
+          (linconf-set-option option value))
       (message "No configuration option found on this line"))))
 
 (defun linconf-get-main-menu-title ()
