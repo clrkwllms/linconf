@@ -11,6 +11,7 @@ LinConf-Emacs is an Emacs package for editing Linux kernel configuration files (
 - **Style**: No comments in code unless explicitly requested
 - **Testing**: All major features must have corresponding test files
 - **Validation**: All user input must be validated against Kconfig definitions
+- **Git Commits**: Always use `-s` option to add Signed-off-by line
 
 ### Code Organization
 - **Main file**: `linconf.el` (1140+ lines, 50+ functions)
