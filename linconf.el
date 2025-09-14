@@ -202,16 +202,30 @@ If FORCE is t, skip validation. Returns t on success, nil on validation failure.
           (linconf-set-config-with-chains option nil))
       (message "No configuration option found on this line"))))
 
+(defun linconf-ensure-kconfig-loaded ()
+  "Ensure Kconfig data is loaded if kernel source path is available.
+Returns t if data is available, nil if no kernel source path is configured."
+  (when (and linconf-kernel-source-path
+             (file-directory-p linconf-kernel-source-path)
+             (= (hash-table-count linconf-kconfig-options) 0))
+    (message "Loading Kconfig data automatically...")
+    (linconf-load-kconfig-data))
+  (and linconf-kernel-source-path
+       (> (hash-table-count linconf-kconfig-options) 0)))
+
 (defun linconf-validate-option-value (option value)
   "Validate VALUE for configuration OPTION based on its Kconfig type.
 Returns (valid . error-message) where valid is t/nil and error-message explains validation failure."
+  (linconf-ensure-kconfig-loaded)
   (let* ((kconfig-info (gethash option linconf-kconfig-options))
          (option-type (when kconfig-info (plist-get kconfig-info :type)))
          (option-range (when kconfig-info (plist-get kconfig-info :range))))
 
     (if (not kconfig-info)
         ;; No Kconfig info - allow any value but warn
-        (cons t (format "Warning: No Kconfig definition found for %s" option))
+        (cons t (if linconf-kernel-source-path
+                    (format "Warning: No Kconfig definition found for %s" option)
+                  (format "Warning: %s not validated (no kernel source path set)" option)))
 
       ;; Validate based on option type
       (cond
@@ -289,6 +303,7 @@ Returns (valid . error-message) where valid is t/nil and error-message explains 
 (defun linconf-validate-current-option ()
   "Validate the option on the current line and show result."
   (interactive)
+  (linconf-ensure-kconfig-loaded)
   (let ((option (linconf-get-option-name)))
     (if option
         (save-excursion
@@ -314,6 +329,7 @@ Returns (valid . error-message) where valid is t/nil and error-message explains 
 (defun linconf-validate-all-options ()
   "Validate all options in the current buffer and report errors."
   (interactive)
+  (linconf-ensure-kconfig-loaded)
   (let ((errors '())
         (warnings '())
         (valid-count 0))

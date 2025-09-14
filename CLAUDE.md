@@ -161,6 +161,7 @@ When significant development milestones are reached or sessions end, preserve th
 - **Create**: After completing major features or significant refactoring
 - **Update**: When development context significantly changes
 - **Reference**: Before starting new development sessions to quickly restore understanding
+- **Exit Save**: **ALWAYS** update context snapshot before ending development sessions
 
 ### Context Restoration Protocol
 At the beginning of each development session, **ALWAYS** read and analyze the `context-snapshot.json` file to restore understanding:
