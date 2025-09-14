@@ -54,6 +54,8 @@ If nil, Kconfig validation will be disabled."
     (define-key map (kbd "C-c r") 'linconf-reload-config)
     (define-key map (kbd "C-c v") 'linconf-validate-current-option)
     (define-key map (kbd "C-c C-v") 'linconf-validate-all-options)
+    (define-key map (kbd "C-c D") 'linconf-validate-all-dependencies)
+    (define-key map (kbd "C-c C-f") 'linconf-fix-dependencies)
     (define-key map (kbd "C-c h") 'linconf-set-hex)
     map)
   "Keymap for `linconf-mode'.")
@@ -134,25 +136,40 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
 
 (defun linconf-set-option (option value &optional force)
   "Set CONFIG option to value, replacing current line with validation.
-If FORCE is t, skip validation. Returns t on success, nil on validation failure."
+If FORCE is t, skip all validation. Returns t on success, nil on validation failure."
   (when option
+    (linconf-ensure-kconfig-loaded)
     (let ((validation-result (if force
                                 (cons t nil)
-                              (linconf-validate-option-value option value))))
-      (if (car validation-result)
+                              (linconf-validate-option-value option value)))
+          (dependency-result (if (or force (null value))
+                                (cons t nil)
+                              (linconf-validate-dependencies option))))
+
+      ;; Check both type and dependency validation
+      (if (and (car validation-result) (car dependency-result))
           (progn
-            ;; Validation passed - set the option
+            ;; All validation passed - set the option
             (delete-region (line-beginning-position) (line-end-position))
             (if (null value)
                 (insert (format "# CONFIG_%s is not set" option))
               (insert (format "CONFIG_%s=%s" option value)))
-            ;; Show warning if there was one
+
+            ;; Show warnings if there were any
             (when (cdr validation-result)
               (message "%s" (cdr validation-result)))
+            (when (cdr dependency-result)
+              (message "%s" (cdr dependency-result)))
             t)
-        ;; Validation failed - show error and don't change anything
-        (message "Validation failed for %s: %s" option (cdr validation-result))
-        nil))))
+
+        ;; Validation failed - show errors and don't change anything
+        (let ((errors '()))
+          (unless (car validation-result)
+            (push (format "Type validation: %s" (cdr validation-result)) errors))
+          (unless (car dependency-result)
+            (push (format "Dependency validation: %s" (cdr dependency-result)) errors))
+          (message "Validation failed for %s: %s" option (mapconcat #'identity errors "; "))
+          nil)))))
 
 (defun linconf-set-y ()
   "Set configuration option to 'y' (built-in)."
@@ -477,17 +494,96 @@ Returns t if condition is true, nil if false, 'unknown if cannot determine."
     (mapcar (lambda (token) (if (listp token) (apply #'string token) token)) 
             (nreverse tokens))))
 
+(defvar linconf-token-pos 0
+  "Current position in token stream during expression evaluation.")
+
+(defvar linconf-token-stream nil
+  "Current token stream being evaluated.")
+
 (defun linconf-eval-condition-tokens (tokens)
-  "Evaluate tokenized condition expression."
-  ;; Simple evaluation - for now, return 'unknown for complex expressions
-  ;; This is a placeholder for a full expression evaluator
-  (if (= (length tokens) 1)
-      (let ((token (car tokens)))
+  "Evaluate tokenized condition expression using recursive descent parser."
+  (let ((linconf-token-pos 0)
+        (linconf-token-stream tokens))
+    (linconf-eval-or-expr)))
+
+(defun linconf-current-token ()
+  "Get current token without advancing position."
+  (when (< linconf-token-pos (length linconf-token-stream))
+    (nth linconf-token-pos linconf-token-stream)))
+
+(defun linconf-advance-token ()
+  "Advance to next token and return current one."
+  (let ((token (linconf-current-token)))
+    (when token (setq linconf-token-pos (1+ linconf-token-pos)))
+    token))
+
+(defun linconf-eval-or-expr ()
+  "Evaluate OR expression (lowest precedence)."
+  (let ((result (linconf-eval-and-expr)))
+    (while (equal (linconf-current-token) "||")
+      (linconf-advance-token)
+      (let ((right (linconf-eval-and-expr)))
+        (setq result (linconf-logical-or result right))))
+    result))
+
+(defun linconf-eval-and-expr ()
+  "Evaluate AND expression (higher precedence than OR)."
+  (let ((result (linconf-eval-not-expr)))
+    (while (equal (linconf-current-token) "&&")
+      (linconf-advance-token)
+      (let ((right (linconf-eval-not-expr)))
+        (setq result (linconf-logical-and result right))))
+    result))
+
+(defun linconf-eval-not-expr ()
+  "Evaluate NOT expression and primary expressions."
+  (cond
+   ((equal (linconf-current-token) "!")
+    (linconf-advance-token)
+    (linconf-logical-not (linconf-eval-primary-expr)))
+   (t (linconf-eval-primary-expr))))
+
+(defun linconf-eval-primary-expr ()
+  "Evaluate primary expression (config names, parentheses)."
+  (let ((token (linconf-current-token)))
+    (cond
+     ((equal token "(")
+      (linconf-advance-token)
+      (let ((result (linconf-eval-or-expr)))
+        (unless (equal (linconf-advance-token) ")")
+          (error "Missing closing parenthesis in condition"))
+        result))
+     ((and token (string-match "^[A-Z0-9_]+$" token))
+      (linconf-advance-token)
+      (let ((value (gethash token linconf-config-values 'unknown)))
         (cond
-         ((string-match "^!?[A-Z0-9_]+$" token)
-          (linconf-evaluate-condition token))
-         (t 'unknown)))
-    'unknown))
+         ((eq value 'unknown) 'unknown)
+         ((or (eq value t) (eq value 'y) (eq value 'm)) t)
+         (t nil))))
+     (t (error "Invalid token in condition: %s" token)))))
+
+(defun linconf-logical-or (left right)
+  "Logical OR with three-valued logic (t, nil, unknown)."
+  (cond
+   ((eq left t) t)
+   ((eq right t) t)
+   ((and (eq left nil) (eq right nil)) nil)
+   (t 'unknown)))
+
+(defun linconf-logical-and (left right)
+  "Logical AND with three-valued logic (t, nil, unknown)."
+  (cond
+   ((eq left nil) nil)
+   ((eq right nil) nil)
+   ((and (eq left t) (eq right t)) t)
+   (t 'unknown)))
+
+(defun linconf-logical-not (value)
+  "Logical NOT with three-valued logic (t, nil, unknown)."
+  (cond
+   ((eq value t) nil)
+   ((eq value nil) t)
+   (t 'unknown)))
 
 (defun linconf-set-config-value (option value)
   "Set configuration OPTION to VALUE for condition evaluation."
@@ -496,6 +592,120 @@ Returns t if condition is true, nil if false, 'unknown if cannot determine."
 (defun linconf-get-config-value (option)
   "Get current value of configuration OPTION."
   (gethash option linconf-config-values 'unknown))
+
+(defun linconf-validate-dependencies (option)
+  "Validate that all dependencies for OPTION are satisfied.
+Returns (valid . error-message) where valid is t/nil."
+  (let* ((kconfig-info (gethash option linconf-kconfig-options))
+         (depends (when kconfig-info (plist-get kconfig-info :depends))))
+    (if (not depends)
+        (cons t nil)
+      (let ((result (linconf-evaluate-condition depends)))
+        (cond
+         ((eq result t) (cons t nil))
+         ((eq result nil) (cons nil (format "Dependencies not satisfied: %s" depends)))
+         (t (cons t (format "Warning: Cannot verify dependencies: %s" depends))))))))
+
+(defun linconf-get-unsatisfied-dependencies (option)
+  "Get list of unsatisfied dependencies for OPTION.
+Returns list of dependency expressions that evaluate to false."
+  (let* ((kconfig-info (gethash option linconf-kconfig-options))
+         (depends (when kconfig-info (plist-get kconfig-info :depends))))
+    (when depends
+      (let ((result (linconf-evaluate-condition depends)))
+        (when (eq result nil)
+          (list depends))))))
+
+(defun linconf-get-dependency-chain (option &optional visited)
+  "Get full dependency chain for OPTION, detecting cycles.
+Returns list of options in dependency order, or nil if circular dependency found."
+  (let ((visited (or visited '())))
+    (if (member option visited)
+        nil
+      (let* ((kconfig-info (gethash option linconf-kconfig-options))
+             (depends (when kconfig-info (plist-get kconfig-info :depends)))
+             (new-visited (cons option visited))
+             (chain (list option)))
+        (when depends
+          (let ((dep-options (linconf-extract-options-from-condition depends)))
+            (dolist (dep-option dep-options)
+              (let ((sub-chain (linconf-get-dependency-chain dep-option new-visited)))
+                (if sub-chain
+                    (setq chain (append sub-chain chain))
+                  (setq chain nil)
+                  (return))))))
+        chain))))
+
+(defun linconf-extract-options-from-condition (condition)
+  "Extract all config option names from CONDITION expression."
+  (let ((options '()))
+    (when (stringp condition)
+      (let ((tokens (linconf-tokenize-condition condition)))
+        (dolist (token tokens)
+          (when (string-match "^[A-Z0-9_]+$" token)
+            (push token options)))))
+    (delete-dups options)))
+
+(defun linconf-detect-circular-dependencies ()
+  "Detect circular dependencies in all Kconfig options.
+Returns list of (option . cycle-path) for options with circular dependencies."
+  (let ((circular-deps '())
+        (all-options '()))
+    (maphash (lambda (option _info) (push option all-options)) linconf-kconfig-options)
+    (dolist (option all-options)
+      (let ((cycle-path (linconf-find-dependency-cycle option)))
+        (when cycle-path
+          (push (cons option cycle-path) circular-deps))))
+    circular-deps))
+
+(defun linconf-find-dependency-cycle (option &optional path)
+  "Find dependency cycle starting from OPTION.
+Returns cycle path if found, nil otherwise."
+  (let ((path (or path '())))
+    (if (member option path)
+        (append path (list option))
+      (let* ((new-path (cons option path))
+             (kconfig-info (gethash option linconf-kconfig-options))
+             (depends (when kconfig-info (plist-get kconfig-info :depends))))
+        (when depends
+          (let ((dep-options (linconf-extract-options-from-condition depends)))
+            (catch 'cycle-found
+              (dolist (dep-option dep-options)
+                (let ((cycle (linconf-find-dependency-cycle dep-option new-path)))
+                  (when cycle
+                    (throw 'cycle-found cycle))))
+              nil)))))))
+
+(defun linconf-build-dependency-graph ()
+  "Build dependency graph for all Kconfig options.
+Returns hash table with option -> list-of-dependencies mapping."
+  (let ((graph (make-hash-table :test 'equal)))
+    (maphash (lambda (option info)
+               (let ((depends (plist-get info :depends)))
+                 (when depends
+                   (let ((dep-options (linconf-extract-options-from-condition depends)))
+                     (puthash option dep-options graph)))))
+             linconf-kconfig-options)
+    graph))
+
+(defun linconf-find-dependency-path (from to &optional visited)
+  "Find dependency path from FROM to TO option.
+Returns list of options forming the path, or nil if no path exists."
+  (let ((visited (or visited '())))
+    (cond
+     ((equal from to) (list to))
+     ((member from visited) nil)
+     (t (let* ((new-visited (cons from visited))
+               (kconfig-info (gethash from linconf-kconfig-options))
+               (depends (when kconfig-info (plist-get kconfig-info :depends))))
+          (when depends
+            (let ((dep-options (linconf-extract-options-from-condition depends)))
+              (catch 'path-found
+                (dolist (dep-option dep-options)
+                  (let ((sub-path (linconf-find-dependency-path dep-option to new-visited)))
+                    (when sub-path
+                      (throw 'path-found (cons from sub-path)))))
+                nil))))))))
 
 (defvar linconf-select-chains (make-hash-table :test 'equal)
   "Hash table mapping config options to their select statements.
@@ -621,6 +831,92 @@ Returns list of changes that would be made."
       (dolist (change changes)
         (message "  %s=%s" (car change) (if (cdr change) "y" "n"))))
     changes))
+
+(defun linconf-validate-all-dependencies ()
+  "Validate dependencies for all options in the current buffer."
+  (interactive)
+  (linconf-ensure-kconfig-loaded)
+  (let ((errors '())
+        (warnings '())
+        (valid-count 0)
+        (circular-deps (linconf-detect-circular-dependencies)))
+
+    ;; Check for circular dependencies first
+    (when circular-deps
+      (dolist (circular circular-deps)
+        (push (format "Circular dependency: %s -> %s"
+                     (car circular)
+                     (mapconcat #'identity (cdr circular) " -> ")) errors)))
+
+    ;; Validate dependencies for all options in buffer
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties
+                    (line-beginning-position) (line-end-position))))
+          (when (string-match "^CONFIG_\\([A-Z0-9_]+\\)=" line)
+            (let* ((option (match-string 1 line))
+                   (result (linconf-validate-dependencies option)))
+              (if (car result)
+                  (progn
+                    (setq valid-count (1+ valid-count))
+                    (when (cdr result)
+                      (push (format "Line %d: %s" (line-number-at-pos) (cdr result)) warnings)))
+                (push (format "Line %d: %s: %s"
+                             (line-number-at-pos) option (cdr result)) errors)))))
+        (forward-line 1)))
+
+    ;; Report results
+    (with-current-buffer (get-buffer-create "*LinConf Dependency Validation*")
+      (erase-buffer)
+      (insert (format "Dependency Validation Results\n"))
+      (insert (format "============================\n\n"))
+      (insert (format "Valid dependencies: %d\n" valid-count))
+      (insert (format "Warnings: %d\n" (length warnings)))
+      (insert (format "Errors: %d\n\n" (length errors)))
+
+      (when errors
+        (insert "ERRORS:\n")
+        (dolist (error errors)
+          (insert (format "  %s\n" error)))
+        (insert "\n"))
+
+      (when warnings
+        (insert "WARNINGS:\n")
+        (dolist (warning warnings)
+          (insert (format "  %s\n" warning)))
+        (insert "\n"))
+
+      (when (and (= (length errors) 0) (= (length warnings) 0))
+        (insert "All dependencies are satisfied!\n"))
+
+      (display-buffer (current-buffer)))))
+
+(defun linconf-fix-dependencies ()
+  "Attempt to automatically fix dependency issues in the current buffer."
+  (interactive)
+  (linconf-ensure-kconfig-loaded)
+  (let ((fixed-count 0))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties
+                    (line-beginning-position) (line-end-position))))
+          (when (string-match "^CONFIG_\\([A-Z0-9_]+\\)=" line)
+            (let* ((option (match-string 1 line))
+                   (unsatisfied (linconf-get-unsatisfied-dependencies option)))
+              (when unsatisfied
+                (dolist (dep-expr unsatisfied)
+                  (let ((dep-options (linconf-extract-options-from-condition dep-expr)))
+                    (dolist (dep-option dep-options)
+                      (when (eq (linconf-get-config-value dep-option) 'unknown)
+                        (when (y-or-n-p (format "Enable %s to satisfy dependency for %s? " dep-option option))
+                          (linconf-set-config-value dep-option t)
+                          (setq fixed-count (1+ fixed-count)))))))))
+        (forward-line 1)))
+    (if (> fixed-count 0)
+        (message "Fixed %d dependency issues. Re-run validation to verify." fixed-count)
+      (message "No automatically fixable dependency issues found."))))))
 
 ;; .config file handling functions
 

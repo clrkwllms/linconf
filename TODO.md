@@ -51,13 +51,20 @@
 - [x] Enhanced hex input function with range hints (C-c h)
 - [x] Comprehensive validation test suite (15/15 tests passing)
 
-#### Dependency Management 🚧
+#### Dependency Management ✅
 - [x] Parse "depends on" clauses
 - [x] Parse "select" statements and build dependency chains
-- [ ] Runtime dependency validation
+- [x] Runtime dependency validation
+- [x] Enhanced expression evaluator with recursive descent parser
+- [x] Support for complex expressions (&&, ||, !, parentheses)
+- [x] Three-valued logic handling (t, nil, unknown)
+- [x] Check for circular dependencies
+- [x] Warn about unsatisfied dependencies
+- [x] Auto-resolution of dependency issues (C-c C-f)
+- [x] Buffer-wide dependency validation (C-c D)
+- [x] Integration with option setting operations
+- [x] Comprehensive dependency validation test suite (9/9 tests passing)
 - [ ] Implement "imply" statement support
-- [ ] Check for circular dependencies
-- [ ] Warn about unsatisfied dependencies
 
 #### User Interface Enhancements 📋
 - [ ] Add completion for CONFIG option names
@@ -74,7 +81,15 @@
 - [ ] Interactive dependency resolution
 - [ ] Export validated .config files
 
-### Phase 3: Enhanced User Experience 📋
+### Phase 3: Dependency Management ✅
+- [x] Enhanced dependency expression evaluator
+- [x] Runtime dependency validation system
+- [x] Circular dependency detection and prevention
+- [x] Interactive dependency resolution commands
+- [x] Integration with all configuration operations
+- [x] Comprehensive testing and validation
+
+### Phase 4: Enhanced User Experience 📋
 - [ ] Add menu bar integration
 - [ ] Implement folding for configuration sections
 - [ ] Add quick navigation by subsystem
@@ -92,19 +107,22 @@
 - [x] Cache system for parsed Kconfig data
 
 ## Recent Development Progress
-- **Lines of Code**: 1140+ lines in main file (ongoing expansion)
-- **Function Count**: 50+ functions implemented
-- **Test Coverage**: 10 comprehensive test files
+- **Lines of Code**: 1480+ lines in main file (expanded with dependency system)
+- **Function Count**: 65+ functions implemented
+- **Test Coverage**: 11 comprehensive test files
 - **Real-world Testing**: 50+ kernel config files from Fedora/RHEL
 - **Debug Tools**: 4 specialized debug utilities
-- **Validation System**: Complete option type validation with 15/15 tests passing
+- **Validation Systems**:
+  - Complete option type validation with 15/15 tests passing
+  - Complete dependency validation with 9/9 tests passing
+- **Key Bindings**: 12+ interactive commands with full integration
 
 ## Current Focus
-- ✅ Runtime validation system completed
-- Dependency validation and circular dependency detection
-- Performance optimization for large kernel source trees
+- ✅ Runtime validation system completed (Phase 2)
+- ✅ Dependency validation and circular dependency detection completed (Phase 3)
 - Enhanced user interface features (completion, help text display)
 - Error highlighting and configuration suggestions
+- Performance optimization for large kernel source trees
 
 ## Future Considerations
 - [ ] Support for out-of-tree kernel modules
