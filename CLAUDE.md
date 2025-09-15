@@ -10,7 +10,9 @@ LinConf-Emacs is an Emacs package for editing Linux kernel configuration files (
 - **Compatibility**: Target Emacs 24.3+ (avoid newer constructs like `case`)
 - **Style**: No comments in code unless explicitly requested
 - **Fix Documentation**: When generating code for fixes or enhancements, ALWAYS add comments explaining why the change was made, what issue it solves, and how it works
+- **Debug Tools**: When creating debugging files or scripts during development, ALWAYS place them in the debug/ directory following the debug-*.el naming pattern
 - **Testing**: All major features must have corresponding test files
+- **Test Organization**: When creating test files during development, ALWAYS place them in the tests/ directory following the test-*.el naming pattern
 - **Validation**: All user input must be validated against Kconfig definitions
 - **Git Commits**: Always use `-s` option to add Signed-off-by line
 
