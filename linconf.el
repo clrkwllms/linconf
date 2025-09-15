@@ -1624,7 +1624,21 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
           (when (> (length options) 0)
             (message "Found %d options in %s" (length options) file))
           (dolist (option options)
-            (puthash (car option) (cdr option) linconf-kconfig-options)
+            ;; FIX: Prevent overwriting correctly parsed types with incorrect ones
+            ;; Issue: Multiple Kconfig files can define the same option, and later definitions
+            ;; with missing/incorrect type information were overwriting correctly parsed
+            ;; bool/tristate options, causing them to be treated as 'int' type during validation.
+            ;; Solution: Only allow overwriting if the new definition has a valid type.
+            (let* ((option-name (car option))
+                   (new-plist (cdr option))
+                   (new-type (plist-get new-plist :type))
+                   (existing-plist (gethash option-name linconf-kconfig-options))
+                   (existing-type (when existing-plist (plist-get existing-plist :type))))
+              ;; Only overwrite if the new definition has a valid type, or if there's no existing entry
+              (when (or (not existing-plist)
+                        (and new-type (not (eq new-type 'unknown)))
+                        (and existing-type (eq existing-type 'unknown)))
+                (puthash option-name new-plist linconf-kconfig-options)))
             (setq total-options (1+ total-options))
             
             ;; Process select statements for this option
