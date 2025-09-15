@@ -1398,7 +1398,7 @@ ENTRY-TYPE can be 'config, 'menuconfig, 'choice, or 'comment."
        ((string-match "^\\(menu\\)?config \\([A-Z0-9_]+\\)" line)
         (setq name (match-string 2 line)))
        ;; Handle type declarations
-       ((string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)\\(?: \"\\([^\"]*\\)\"\\)?" line)
+       ((string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)\\b\\(?: \"\\([^\"]*\\)\"\\)?" line)
         (setq type (intern (match-string 1 line))))
        ;; Handle def_bool and def_tristate (type + default combined)
        ((string-match "^[ \t]+def_\\(bool\\|tristate\\)\\s-+\\(.+\\)" line)
