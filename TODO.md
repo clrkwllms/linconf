@@ -66,11 +66,10 @@
 - [x] Comprehensive dependency validation test suite (9/9 tests passing)
 - [ ] Implement "imply" statement support
 
-#### User Interface Enhancements 📋
-- [ ] Add completion for CONFIG option names
-- [ ] Display help text from Kconfig definitions
+#### User Interface Enhancements 🚧
+- [x] Display help text from Kconfig definitions (C-c ?)
 - [ ] Show option type and constraints in minibuffer
-- [ ] Highlight invalid configurations
+- [x] Highlight invalid configurations (C-c H, C-c C-h)
 - [ ] Provide suggestions for fixing dependency issues
 
 #### Advanced Features 📋
@@ -107,22 +106,24 @@
 - [x] Cache system for parsed Kconfig data
 
 ## Recent Development Progress
-- **Lines of Code**: 1480+ lines in main file (expanded with dependency system)
-- **Function Count**: 65+ functions implemented
-- **Test Coverage**: 11 comprehensive test files
+- **Lines of Code**: 1600+ lines in main file (expanded with UI enhancements)
+- **Function Count**: 70+ functions implemented
+- **Test Coverage**: 10 comprehensive test files
 - **Real-world Testing**: 50+ kernel config files from Fedora/RHEL
 - **Debug Tools**: 4 specialized debug utilities
 - **Validation Systems**:
   - Complete option type validation with 15/15 tests passing
   - Complete dependency validation with 9/9 tests passing
-- **Key Bindings**: 12+ interactive commands with full integration
+- **Key Bindings**: 15+ interactive commands with full integration
+- **UI Enhancements**: Help text display and visual error highlighting
 
 ## Current Focus
 - ✅ Runtime validation system completed (Phase 2)
 - ✅ Dependency validation and circular dependency detection completed (Phase 3)
-- Enhanced user interface features (completion, help text display)
-- Error highlighting and configuration suggestions
-- Performance optimization for large kernel source trees
+- 🚧 User interface enhancements (help text ✅, highlighting ✅)
+- ✅ Error highlighting and visual feedback system
+- 📋 Configuration suggestions and minibuffer enhancements
+- 📋 Performance optimization for large kernel source trees
 
 ## Future Considerations
 - [ ] Support for out-of-tree kernel modules

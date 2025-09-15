@@ -57,6 +57,9 @@ If nil, Kconfig validation will be disabled."
     (define-key map (kbd "C-c D") 'linconf-validate-all-dependencies)
     (define-key map (kbd "C-c C-f") 'linconf-fix-dependencies)
     (define-key map (kbd "C-c h") 'linconf-set-hex)
+    (define-key map (kbd "C-c ?") 'linconf-show-help-text)
+    (define-key map (kbd "C-c H") 'linconf-highlight-invalid-configurations)
+    (define-key map (kbd "C-c C-h") 'linconf-clear-highlighting)
     map)
   "Keymap for `linconf-mode'.")
 
@@ -76,6 +79,16 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
 
 (defvar linconf-main-menu-title nil
   "Main menu title from mainmenu directive.")
+
+(defface linconf-invalid-face
+  '((t (:background "red" :foreground "white")))
+  "Face for invalid configuration lines."
+  :group 'linconf)
+
+(defface linconf-warning-face
+  '((t (:background "yellow" :foreground "black")))
+  "Face for configuration warnings."
+  :group 'linconf)
 
 (defvar linconf-font-lock-keywords
   '(("^# CONFIG_\\([A-Z0-9_]+\\) is not set" . font-lock-comment-face)
@@ -343,10 +356,13 @@ Returns (valid . error-message) where valid is t/nil and error-message explains 
                 (message "✗ %s: %s" option (cdr result))))))
       (message "No configuration option found on this line"))))
 
-(defun linconf-validate-all-options ()
-  "Validate all options in the current buffer and report errors."
-  (interactive)
+(defun linconf-validate-all-options (&optional highlight)
+  "Validate all options in the current buffer and report errors.
+If HIGHLIGHT is non-nil, also highlight invalid configurations."
+  (interactive "P")
   (linconf-ensure-kconfig-loaded)
+  (when highlight
+    (linconf-clear-highlighting))
   (let ((errors '())
         (warnings '())
         (valid-count 0))
@@ -366,10 +382,16 @@ Returns (valid . error-message) where valid is t/nil and error-message explains 
                   (progn
                     (setq valid-count (1+ valid-count))
                     (when (cdr result)
-                      (push (format "Line %d: %s" (line-number-at-pos) (cdr result)) warnings)))
+                      (push (format "Line %d: %s" (line-number-at-pos) (cdr result)) warnings)
+                      (when highlight
+                        (linconf-highlight-line (line-number-at-pos) 'linconf-warning-face
+                                              (format "Warning: %s" (cdr result))))))
                 (push (format "Line %d: %s: %s"
-                             (line-number-at-pos) option (cdr result)) errors)))))
-        (forward-line 1)))
+                             (line-number-at-pos) option (cdr result)) errors)
+                (when highlight
+                  (linconf-highlight-line (line-number-at-pos) 'linconf-invalid-face
+                                        (format "Invalid: %s" (cdr result)))))))
+        (forward-line 1))))
 
     ;; Report results
     (with-current-buffer (get-buffer-create "*LinConf Validation*")
@@ -821,6 +843,77 @@ Returns plist with :depends, :selects, :selected-by, :conflicts."
       (message "  Selected by: %s" (mapconcat #'identity (plist-get info :selected-by) ", ")))
     (unless (or (plist-get info :depends) (plist-get info :selects) (plist-get info :selected-by))
       (message "  No dependencies found"))))
+
+(defun linconf-show-help-text ()
+  "Show help text for the config option on the current line."
+  (interactive)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (let ((kconfig-info (gethash option linconf-kconfig-options)))
+          (if kconfig-info
+              (let ((help-text (plist-get kconfig-info :help))
+                    (option-type (plist-get kconfig-info :type))
+                    (range (plist-get kconfig-info :range))
+                    (choices (plist-get kconfig-info :choices))
+                    (default (plist-get kconfig-info :default)))
+                (with-output-to-temp-buffer "*LinConf Help*"
+                  (princ (format "CONFIG_%s\n" option))
+                  (princ (format "Type: %s\n" (or option-type "unknown")))
+                  (when default
+                    (princ (format "Default: %s\n" default)))
+                  (when range
+                    (princ (format "Range: %s to %s\n" (car range) (cdr range))))
+                  (when choices
+                    (princ (format "Choices: %s\n" (mapconcat #'identity choices ", "))))
+                  (princ "\n")
+                  (if help-text
+                      (princ help-text)
+                    (princ "No help text available for this option."))))
+            (message "No Kconfig definition found for CONFIG_%s" option)))
+      (message "No configuration option found on this line"))))
+
+(defvar linconf-invalid-overlays '()
+  "List of overlays used to highlight invalid configurations.")
+
+(defun linconf-clear-highlighting ()
+  "Clear all invalid configuration highlighting."
+  (interactive)
+  (dolist (overlay linconf-invalid-overlays)
+    (delete-overlay overlay))
+  (setq linconf-invalid-overlays '()))
+
+(defun linconf-highlight-line (line-number face &optional message)
+  "Highlight LINE-NUMBER with FACE and optional MESSAGE."
+  (save-excursion
+    (goto-char (point-min))
+    (forward-line (1- line-number))
+    (let ((start (line-beginning-position))
+          (end (line-end-position)))
+      (let ((overlay (make-overlay start end)))
+        (overlay-put overlay 'face face)
+        (when message
+          (overlay-put overlay 'help-echo message))
+        (push overlay linconf-invalid-overlays)))))
+
+(defun linconf-highlight-invalid-configurations ()
+  "Highlight all invalid configurations in the current buffer."
+  (interactive)
+  (linconf-ensure-kconfig-loaded)
+  (linconf-clear-highlighting)
+  (save-excursion
+    (goto-char (point-min))
+    (let ((line-number 1))
+      (while (not (eobp))
+        (beginning-of-line)
+        (when (looking-at "^CONFIG_\\([A-Z0-9_]+\\)=\\(.*\\)")
+          (let* ((option (match-string 1))
+                 (value (match-string 2))
+                 (validation-result (linconf-validate-option-value option value)))
+            (unless (car validation-result)
+              (linconf-highlight-line line-number 'linconf-invalid-face
+                                    (format "Invalid: %s" (cdr validation-result))))))
+        (forward-line 1)
+        (setq line-number (1+ line-number))))))
 
 (defun linconf-simulate-config-change (option value)
   "Simulate setting OPTION to VALUE and show what would be auto-selected.
