@@ -369,7 +369,8 @@ If HIGHLIGHT is non-nil, also highlight invalid configurations."
     (linconf-clear-highlighting))
   (let ((errors '())
         (warnings '())
-        (valid-count 0))
+        (valid-count 0)
+        (config-file-name buffer-file-name))
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
@@ -402,8 +403,8 @@ If HIGHLIGHT is non-nil, also highlight invalid configurations."
       (erase-buffer)
       (insert (format "LinConf Configuration Validation Report\n"))
       (insert (format "======================================\n\n"))
-      (when buffer-file-name
-        (insert (format "Config file: %s\n" buffer-file-name)))
+      (when config-file-name
+        (insert (format "Config file: %s\n" config-file-name)))
       (when linconf-detected-architecture
         (insert (format "Architecture: %s\n" linconf-detected-architecture)))
       (insert (format "Valid options: %d\n" valid-count))
