@@ -1549,7 +1549,9 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
             (in-choice nil)
             (in-menu nil)
             (menu-stack '())
-            (config-type 'config))
+            (config-type 'config)
+            (in-if-block nil)
+            (if-conditions '()))
         
         (dolist (line lines)
           (let ((trimmed-line (string-trim line)))
@@ -1570,7 +1572,19 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
               (when menu-stack
                 (pop menu-stack))
               (setq in-menu (> (length menu-stack) 0)))
-             
+
+             ;; Handle if blocks (conditional configuration)
+             ((string-match "^if\\s-+\\(.+\\)" line)
+              (let ((condition (match-string 1 line)))
+                (push condition if-conditions)
+                (setq in-if-block t)))
+
+             ;; Handle endif blocks
+             ((string-match "^endif" line)
+              (when if-conditions
+                (pop if-conditions))
+              (setq in-if-block (> (length if-conditions) 0)))
+
              ;; Handle choice start
              ((string-match "^choice" line)
               (when current-config
@@ -1651,7 +1665,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
              
              ;; Handle non-indented, non-empty lines that end current config
              ((and in-config (not (string-match "^[ \t]*$" line))
-                   (not (string-match "^\\(config\\|menuconfig\\|choice\\|endchoice\\|menu\\|endmenu\\|source\\|if\\|endif\\)" line)))
+                   (not (string-match "^\\(config\\|menuconfig\\|choice\\|endchoice\\|menu\\|endmenu\\|source\\)" line)))
               (when current-config
                 (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
                   (when option (push option options))))
