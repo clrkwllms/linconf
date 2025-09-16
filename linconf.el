@@ -1586,16 +1586,29 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
              ;; Handle choice end
              ((string-match "^endchoice" line)
               (when current-choice
+                ;; Process any remaining config before ending choice
+                (when current-config
+                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                    (when option (push option options))))
+                ;; Create phantom entries for individual choice options
+                (dolist (choice-opt choice-options)
+                  (let ((phantom-option (cons choice-opt
+                                             (list :type 'bool
+                                                   :help (format "Choice option in group")
+                                                   :phantom t))))
+                    (push phantom-option options)))
                 ;; Create a synthetic choice option
                 (let* ((choice-name (format "CHOICE_%d" (random 10000)))
-                       (choice-option (cons choice-name 
+                       (choice-option (cons choice-name
                                            (list :type 'choice
                                                  :choices choice-options
                                                  :help "Choice group"))))
                   (push choice-option options)))
               (setq in-choice nil
                     current-choice nil
-                    choice-options '()))
+                    choice-options '()
+                    current-config nil
+                    in-config nil))
              
              ;; Handle comment entries
              ((string-match "^comment\\s-+\"\\([^\"]+\\)\"" line)
@@ -1607,8 +1620,8 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
                     in-config t
                     config-type 'comment))
              
-             ;; Handle config entries
-             ((string-match "^config[ \t]+\\([A-Z0-9_]+\\)" line)
+             ;; Handle config entries (top-level and in choices)
+             ((string-match "^[ \t]*config[ \t]+\\([A-Z0-9_]+\\)" line)
               (let ((config-name (match-string 1 line))) ; Save match immediately
                 (when current-config
                   ;; Finish previous config
@@ -1620,8 +1633,8 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
                 (when in-choice
                   (push config-name choice-options))))
              
-             ;; Handle menuconfig entries
-             ((string-match "^menuconfig[ \t]+\\([A-Z0-9_]+\\)" line)
+             ;; Handle menuconfig entries (top-level and in choices)
+             ((string-match "^[ \t]*menuconfig[ \t]+\\([A-Z0-9_]+\\)" line)
               (let ((menuconfig-name (match-string 1 line))) ; Save match immediately
                 (when current-config
                   ;; Finish previous config
