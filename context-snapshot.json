@@ -1,16 +1,16 @@
 {
   "timestamp": "2025-09-15",
-  "phase": "Architecture Detection and Mode Line Display Complete - Enhanced User Experience",
+  "phase": "Phase 4 Complete - Architecture Detection with Enhanced Validation Reporting",
   "current_state": {
     "main_file_lines": 1750,
     "function_count": "75+",
     "test_files": 12,
-    "debug_files": 26,
+    "debug_files": 27,
     "validation_tests_passing": "15/15",
-    "last_major_feature": "Architecture detection from config comments with mode line display integration",
+    "last_major_feature": "Enhanced validation reporting with config file path and architecture display",
     "current_branch": "kconfig",
     "working_directory_status": "clean",
-    "latest_commit": "7a07c8a18136 - Add architecture detection and mode line display for config files"
+    "latest_commit": "8cbfcba5db82 - Fix config file path display in validation report"
   },
   "active_development": {
     "current_focus": "User experience enhancements and architecture-aware functionality",
@@ -113,7 +113,9 @@
       "ADDED: Architecture detection during linconf-mode activation",
       "FIXED: Help text type parsing preventing type override from help content",
       "ENHANCED: Parser robustness with comprehensive word boundary handling",
-      "ADDED: 9 new debug scripts for architecture detection testing"
+      "ADDED: 9 new debug scripts for architecture detection testing",
+      "ENHANCED: Validation reporting with config file path and architecture display",
+      "FIXED: Buffer scope issue preventing config file path from showing in reports"
     ]
   },
   "validation_system_details": {
@@ -136,7 +138,8 @@
       "Comprehensive help text display with option metadata",
       "Overlay-based error indication with hover messages",
       "FIXED: Accurate type detection preventing misclassification",
-      "ENHANCED: Architecture-aware dependency evaluation"
+      "ENHANCED: Architecture-aware dependency evaluation",
+      "ENHANCED: Validation reports display config file path and detected architecture"
     ]
   },
   "debug_tools": {
@@ -164,6 +167,9 @@
       "debug-mode-line-arch.el - Mode line architecture display testing",
       "debug-riscv-mode.el - RISC-V mode activation testing",
       "test-mode-line-demo.el - Mode line display demonstration"
+    ],
+    "validation_debugging": [
+      "debug-validation-report.el - Validation report functionality testing"
     ],
     "debugging_methodology": [
       "Isolated option parsing to identify scope of issues",
@@ -197,7 +203,8 @@
       "Hex values accept both 0x prefix and plain hex digits",
       "CRITICAL: Type regexes must use word boundaries to avoid partial matches in help text",
       "CRITICAL: Type parsing must be scoped to non-help sections only",
-      "Architecture detection requires buffer-file-name to be set during mode activation"
+      "Architecture detection requires buffer-file-name to be set during mode activation",
+      "CRITICAL: Capture buffer-file-name before switching buffers to avoid scope issues"
     ],
     "testing_approach": [
       "tests/test-option-validation.el provides comprehensive validation testing",
@@ -220,13 +227,14 @@
       "tests/test-*.el - 8 other comprehensive test files"
     ],
     "debug_files": [
-      "debug/ - 26 debug utilities for comprehensive parser and architecture testing",
+      "debug/ - 27 debug utilities for comprehensive parser, architecture, and validation testing",
       "debug/debug-*-kmod.el - TEST_KMOD specific debugging (3 files)",
       "debug/debug-*-krb5.el - CRYPTO_KRB5 specific debugging (2 files)",
       "debug/debug-tmpfs-*.el - TMPFS_INODE64 bool type debugging (2 files)",
       "debug/debug-arch-*.el - Architecture detection testing (3 files)",
       "debug/debug-mode-*.el - Mode line and activation testing (3 files)",
       "debug/debug-riscv-*.el - RISC-V specific testing (2 files)",
+      "debug/debug-validation-report.el - Validation report functionality testing",
       "debug/debug-regex-match.el - Regex pattern validation",
       "debug/debug-parser-trace.el - Parser state tracking",
       "debug/debug-overwrite.el - Hash table modification monitoring"
