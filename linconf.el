@@ -80,6 +80,10 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
 (defvar linconf-main-menu-title nil
   "Main menu title from mainmenu directive.")
 
+(defvar linconf-detected-architecture nil
+  "Architecture detected from config file comment or kernel source.
+Set automatically when config files are loaded.")
+
 (defface linconf-invalid-face
   '((t (:background "red" :foreground "white")))
   "Face for invalid configuration lines."
@@ -1023,6 +1027,16 @@ Returns hash table with option names as keys and values as:
 - number for numeric values"
   (let ((config-values (make-hash-table :test 'equal)))
     (when (file-readable-p config-file)
+      ;; Detect and set architecture from config file comment
+      (let ((detected-arch (linconf-detect-architecture-from-config config-file)))
+        (when detected-arch
+          (setq linconf-detected-architecture detected-arch)
+          (linconf-set-architecture-variables detected-arch)
+          ;; Update mode line if we're in a linconf buffer
+          (when (derived-mode-p 'linconf-mode)
+            (force-mode-line-update))
+          (message "Detected architecture from config: %s" detected-arch)))
+
       (with-temp-buffer
         (insert-file-contents config-file)
         (goto-char (point-min))
@@ -1236,6 +1250,56 @@ Sets sensible defaults for options that are defined in Kconfig but not in .confi
            ((member "s390" arch-dirs) "s390")
            (t "x86"))) ;; Default fallback
       "x86"))) ;; Default when no arch directory exists
+
+(defun linconf-detect-architecture-from-config (config-file)
+  "Detect architecture from config file first line comment.
+Returns the architecture string if detected, nil otherwise.
+Supports patterns like '# x86_64', '# arm64', '# riscv', etc."
+  (when (file-readable-p config-file)
+    (with-temp-buffer
+      (insert-file-contents config-file nil 0 100) ; Read just first 100 chars
+      (goto-char (point-min))
+      (when (looking-at "^#[ \t]*\\([a-zA-Z0-9_]+\\)")
+        (let ((arch-comment (match-string 1)))
+          (cond
+           ;; Map config comment architectures to standard names
+           ((string-match "x86_64\\|x86" arch-comment) "x86")
+           ((string-match "arm64\\|aarch64" arch-comment) "arm64")
+           ((string-match "arm" arch-comment) "arm")
+           ((string-match "riscv" arch-comment) "riscv")
+           ((string-match "s390" arch-comment) "s390")
+           ((string-match "powerpc\\|ppc" arch-comment) "powerpc")
+           ((string-match "mips" arch-comment) "mips")
+           ;; Return the comment as-is for other architectures
+           (t arch-comment)))))))
+
+(defun linconf-set-architecture-variables (arch)
+  "Set architecture-specific config variables based on ARCH.
+These variables are commonly used in Kconfig dependency expressions."
+  (when arch
+    (pcase arch
+      ("x86" (linconf-set-config-value "X86" t)
+             (linconf-set-config-value "X86_64" t)
+             (linconf-set-config-value "64BIT" t))
+      ("arm64" (linconf-set-config-value "ARM64" t)
+               (linconf-set-config-value "64BIT" t))
+      ("arm" (linconf-set-config-value "ARM" t))
+      ("riscv" (linconf-set-config-value "RISCV" t)
+               (linconf-set-config-value "64BIT" t))
+      ("s390" (linconf-set-config-value "S390" t)
+              (linconf-set-config-value "64BIT" t))
+      ("powerpc" (linconf-set-config-value "PPC" t)
+                 (linconf-set-config-value "PPC64" t)
+                 (linconf-set-config-value "64BIT" t))
+      ("mips" (linconf-set-config-value "MIPS" t))
+      (_ nil))))
+
+(defun linconf-mode-line-architecture ()
+  "Return architecture string for mode line display.
+Returns formatted string like '[x86_64]' or empty string if no arch detected."
+  (if linconf-detected-architecture
+      (format " [%s]" linconf-detected-architecture)
+    ""))
 
 (defun linconf-get-kernel-build-vars (kernel-root)
   "Get kernel build variables from the source tree context."
@@ -1670,6 +1734,18 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
   (setq font-lock-defaults '(linconf-font-lock-keywords))
   (setq comment-start "#")
   (setq comment-end "")
+  ;; Add architecture to mode line
+  (setq mode-line-buffer-identification
+        (list (default-value 'mode-line-buffer-identification)
+              '(:eval (linconf-mode-line-architecture))))
+  ;; Detect architecture from config file when mode is activated
+  (when buffer-file-name
+    (let ((detected-arch (linconf-detect-architecture-from-config buffer-file-name)))
+      (when detected-arch
+        (setq linconf-detected-architecture detected-arch)
+        (linconf-set-architecture-variables detected-arch)
+        (force-mode-line-update)
+        (message "Detected architecture: %s" detected-arch))))
   (font-lock-mode 1))
 
 ;;;###autoload
