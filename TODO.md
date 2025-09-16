@@ -91,13 +91,15 @@
 - [x] Integration with all configuration operations
 - [x] Comprehensive testing and validation
 
-### Phase 4: Architecture Detection and Mode Line Display ✅
+### Phase 4: Architecture Detection and Enhanced Validation Reporting ✅
 - [x] Architecture detection from config file first-line comments
 - [x] Support for multiple architectures (x86, ARM, RISC-V, s390, PowerPC, MIPS)
 - [x] Automatic architecture variable setting for dependency evaluation
 - [x] Mode line integration with immediate visual feedback
 - [x] Seamless integration with mode activation
 - [x] Comprehensive testing across multiple architecture configs
+- [x] Enhanced validation reporting with config file path and architecture display
+- [x] Fixed buffer scope issues in validation report generation
 
 ### Phase 5: Advanced User Experience 📋
 - [ ] Add menu bar integration
@@ -121,7 +123,7 @@
 - **Function Count**: 75+ functions implemented
 - **Test Coverage**: 12 comprehensive test files
 - **Real-world Testing**: 50+ kernel config files from Fedora/RHEL
-- **Debug Tools**: 26 specialized debug utilities
+- **Debug Tools**: 27 specialized debug utilities
 - **Validation Systems**:
   - Complete option type validation with 15/15 tests passing
   - Complete dependency validation with 9/9 tests passing
@@ -131,18 +133,24 @@
   - Complete multi-architecture support (x86, ARM, RISC-V, s390, PowerPC, MIPS)
   - Mode line integration with immediate visual feedback
   - Automatic architecture variable setting for accurate dependency evaluation
+- **Enhanced Validation Reporting**:
+  - Config file path display in validation reports
+  - Architecture information in validation output
+  - Fixed buffer scope issues preventing proper file path display
 - **Key Bindings**: 15+ interactive commands with full integration
 - **UI Enhancements**: Help text display, visual error highlighting, architecture display
 
 ## Current Focus
 - ✅ Runtime validation system completed (Phase 2)
 - ✅ Dependency validation and circular dependency detection completed (Phase 3)
-- ✅ Architecture detection and mode line display completed (Phase 4)
-- ✅ User interface enhancements (help text ✅, highlighting ✅, architecture display ✅)
+- ✅ Architecture detection and enhanced validation reporting completed (Phase 4)
+- ✅ User interface enhancements (help text ✅, highlighting ✅, architecture display ✅, validation reporting ✅)
 - ✅ Error highlighting and visual feedback system
-- ✅ Critical parser bug fixes (tristate type detection)
-- 📋 Configuration suggestions and minibuffer enhancements
+- ✅ Critical parser bug fixes (tristate type detection, buffer scope issues)
+- 📋 Configuration suggestions and minibuffer enhancements (Phase 5)
 - 📋 Performance optimization for large kernel source trees
+- 📋 Interactive choice group selection
+- 📋 Default value suggestions based on Kconfig
 
 ## Future Considerations
 - [ ] Support for out-of-tree kernel modules
