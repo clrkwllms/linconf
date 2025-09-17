@@ -1,3 +1,17 @@
+# linconf.el
+An emacs package for editing and validating Linux kernel config files
+
+This started out as an experiment to see what I could do using Claude
+Code. Originaly I said something like: "Hey Claude, make me an emacs
+major-mode for editing config files, so that I don't have to type
+'# CONFIG_FOO is not set" when I wanted to turn a config off". That
+took Claude about five minutes. So I started upping the ante,
+eventually getting to validating that I set CONFIG_FOO to a legal
+value (1700 lines of elisp later). 
+
+Here btw, is what claude said when I wanted some verbiage for this file:
+
+---
 # LinConf-Emacs
 
 A comprehensive Emacs package for editing and validating Linux kernel configuration files (.config files) with advanced Kconfig parsing and validation capabilities.
