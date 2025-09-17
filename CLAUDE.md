@@ -87,6 +87,7 @@ C-c C-v  - Validate all options
 - 40+ debug utilities in debug/ directory for parser troubleshooting
 - Architecture detection testing across multiple architectures
 - Conditional parsing validation with IP_VS and other conditional options
+- Leading whitespace config parsing validation (SNET_VDPA and indented options)
 
 ## Build & Validation Commands
 ```bash

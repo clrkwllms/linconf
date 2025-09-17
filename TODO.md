@@ -117,6 +117,8 @@
 - [x] Fixed conditional parsing regex bug in linconf-parse-kconfig-option
 - [x] Enhanced validation from 8,382 to 17,849 valid options (26/26 IP_VS options now parsed)
 - [x] All conditional blocks (if/endif) now parse correctly across entire kernel tree
+- [x] **PARSER FIX**: Leading whitespace config parsing (SNET_VDPA and similar indented options)
+- [x] Fixed regex to allow leading whitespace before config keyword (^[ \\t]*config vs ^config)
 - [x] Comprehensive debugging and testing with conditional parsing tools
 - [x] File organization: Moved test-*.el files to tests/, debug files to debug/
 - [ ] Show Kconfig source file path for each option (in help text and new command) - **NEW PRIORITY**
@@ -149,6 +151,7 @@
   - FIXED: Help text type override prevention (TMPFS_INODE64)
   - **MAJOR FIX**: Choice group option parsing - 8,382 valid options, 96%+ warning reduction
   - **MAJOR COMPLETION**: Conditional block parsing - 17,849 valid options, all IP_VS options working
+  - **PARSER FIX**: Leading whitespace config parsing - SNET_VDPA and indented options now work
   - FIXED: HZ timer frequencies, CRYPTO options, DEFAULT_SECURITY options now validate correctly
   - FIXED: All conditional blocks (if/endif) across entire kernel tree now parse correctly
 - **Architecture Detection**:

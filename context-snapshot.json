@@ -7,10 +7,10 @@
     "test_files": 12,
     "debug_files": 40,
     "validation_tests_passing": "15/15",
-    "last_major_feature": "Complete conditional block parsing implementation - all IP_VS and conditional options working",
+    "last_major_feature": "Leading whitespace config parsing fix - SNET_VDPA and indented options now work",
     "current_branch": "phase6",
     "working_directory_status": "clean",
-    "latest_commit": "0edf6de3bc61 - Move debug-if-parsing.el to debug/ directory"
+    "latest_commit": "826bc8b1ada8 - Fix leading whitespace config parsing: SNET_VDPA and similar options"
   },
   "active_development": {
     "current_focus": "Phase 6 conditional parsing completed - now focusing on next phase enhancements",
@@ -167,6 +167,8 @@
       "C-c C-h - linconf-clear-highlighting"
     ],
     "recent_changes": [
+      "PARSER FIX: Leading whitespace config parsing - SNET_VDPA and indented options now work",
+      "FIXED: Config regex to allow leading whitespace (^[ \\t]*config vs ^config)",
       "MAJOR COMPLETION: Conditional block parsing implementation - all IP_VS and conditional options working",
       "FIXED: Critical regex bug in linconf-parse-kconfig-option (tab vs space handling)",
       "ENHANCED: Validation from 8,382 to 17,849 valid options (doubled recognition rate)",
@@ -334,6 +336,9 @@
       "debug/debug-if-parsing.el - Conditional block parsing testing",
       "debug/debug-conditional-flow.el - Detailed conditional parsing analysis",
       "debug/debug-parse-ipv6.el - Direct IP_VS config block parsing test",
+      "debug/debug-snet-vdpa.el - SNET_VDPA regex pattern testing",
+      "debug/debug-snet-full-test.el - Full SNET_VDPA validation testing",
+      "debug/debug-snet-quick.el - Quick SNET_VDPA recognition test",
       "debug/debug-validation-report.el - Validation report functionality testing",
       "debug/debug-regex-match.el - Regex pattern validation",
       "debug/debug-parser-trace.el - Parser state tracking",
