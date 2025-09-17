@@ -1464,7 +1464,7 @@ ENTRY-TYPE can be 'config, 'menuconfig, 'choice, or 'comment."
         (setq comment-text (match-string 1 line))
         (setq type 'comment))
        ;; Handle config or menuconfig declaration
-       ((string-match "^\\(menu\\)?config[ \t]+\\([A-Z0-9_]+\\)" line)
+       ((string-match "^[ \t]*\\(menu\\)?config[ \t]+\\([A-Z0-9_]+\\)" line)
         (setq name (match-string 2 line)))
        ;; Handle type declarations (but not in help text)
        ((and (not in-help) (string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)\\b\\(?: \"\\([^\"]*\\)\"\\)?" line))
