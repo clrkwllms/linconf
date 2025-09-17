@@ -113,7 +113,8 @@
 - [x] User experience: 96%+ reduction in false positive validation errors
 
 ### Phase 6: Advanced User Experience 📋
-- [ ] Complete conditional block parsing implementation (IP_VS and similar options)
+- [ ] Complete conditional block parsing implementation (IP_VS and similar options) - **PRIORITY**
+- [ ] Show Kconfig source file path for each option (in help text and new command)
 - [ ] Add menu bar integration
 - [ ] Implement folding for configuration sections
 - [ ] Add quick navigation by subsystem
@@ -162,14 +163,14 @@
 - ✅ User interface enhancements (help text ✅, highlighting ✅, architecture display ✅, validation reporting ✅)
 - ✅ Error highlighting and visual feedback system
 - ✅ Critical parser bug fixes (tristate type detection, choice group parsing, buffer scope issues)
-- 📋 Complete conditional block parsing implementation (IP_VS options - Phase 6)
+- 📋 Complete conditional block parsing implementation (IP_VS options - Phase 6 **PRIORITY**)
+- 📋 Show Kconfig source file paths for options (help text enhancement)
 - 📋 Configuration suggestions and minibuffer enhancements
 - 📋 Performance optimization for large kernel source trees
 - 📋 Interactive choice group selection
 - 📋 Default value suggestions based on Kconfig
 
 ## Future Considerations
-- [ ] Complete conditional block parsing implementation (IP_VS and similar options)
 - [ ] Support for out-of-tree kernel modules
 - [ ] Integration with kernel documentation
 - [ ] Visual configuration interface
