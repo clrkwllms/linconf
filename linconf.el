@@ -58,6 +58,7 @@ If nil, Kconfig validation will be disabled."
     (define-key map (kbd "C-c C-f") 'linconf-fix-dependencies)
     (define-key map (kbd "C-c h") 'linconf-set-hex)
     (define-key map (kbd "C-c ?") 'linconf-show-help-text)
+    (define-key map (kbd "C-c f") 'linconf-show-source-file)
     (define-key map (kbd "C-c H") 'linconf-highlight-invalid-configurations)
     (define-key map (kbd "C-c C-h") 'linconf-clear-highlighting)
     map)
@@ -72,7 +73,8 @@ Keys are option names (without CONFIG_ prefix), values are plists with:
 :select - list of selected options
 :default - default value
 :range - for int/hex types, (min . max)
-:choices - for choice groups, list of options")
+:choices - for choice groups, list of options
+:source-file - path to Kconfig file containing this option")
 
 (defvar linconf-kconfig-loaded nil
   "Non-nil if Kconfig data has been loaded.")
@@ -853,6 +855,22 @@ Returns plist with :depends, :selects, :selected-by, :conflicts."
     (unless (or (plist-get info :depends) (plist-get info :selects) (plist-get info :selected-by))
       (message "  No dependencies found"))))
 
+(defun linconf-relative-source-path (source-file)
+  "Return SOURCE-FILE path relative to kernel source root for display.
+If SOURCE-FILE is absolute and within kernel source tree, return relative path.
+If SOURCE-FILE is already relative, return as-is.
+Otherwise return the filename only."
+  (when source-file
+    (cond
+     ;; If already relative path, return as-is
+     ((not (file-name-absolute-p source-file)) source-file)
+     ;; If absolute and within kernel source tree, make relative
+     ((and linconf-kernel-source-path
+           (string-prefix-p (expand-file-name linconf-kernel-source-path) source-file))
+      (file-relative-name source-file linconf-kernel-source-path))
+     ;; Otherwise return just filename for readability
+     (t (file-name-nondirectory source-file)))))
+
 (defun linconf-show-help-text ()
   "Show help text for the config option on the current line."
   (interactive)
@@ -864,10 +882,14 @@ Returns plist with :depends, :selects, :selected-by, :conflicts."
                     (option-type (plist-get kconfig-info :type))
                     (range (plist-get kconfig-info :range))
                     (choices (plist-get kconfig-info :choices))
-                    (default (plist-get kconfig-info :default)))
+                    (default (plist-get kconfig-info :default))
+                    (source-file (plist-get kconfig-info :source-file)))
                 (with-output-to-temp-buffer "*LinConf Help*"
                   (princ (format "CONFIG_%s\n" option))
                   (princ (format "Type: %s\n" (or option-type "unknown")))
+                  (when source-file
+                    (let ((relative-path (linconf-relative-source-path source-file)))
+                      (princ (format "Source: %s\n" relative-path))))
                   (when default
                     (princ (format "Default: %s\n" default)))
                   (when range
@@ -879,6 +901,20 @@ Returns plist with :depends, :selects, :selected-by, :conflicts."
                       (princ help-text)
                     (princ "No help text available for this option."))))
             (message "No Kconfig definition found for CONFIG_%s" option)))
+      (message "No configuration option found on this line"))))
+
+(defun linconf-show-source-file ()
+  "Display the source file path for the Kconfig option at point."
+  (interactive)
+  (linconf-ensure-kconfig-loaded)
+  (let ((option (linconf-get-option-name)))
+    (if option
+        (let* ((option-plist (gethash option linconf-kconfig-options))
+               (source-file (when option-plist (plist-get option-plist :source-file))))
+          (if source-file
+              (let ((display-path (linconf-relative-source-path source-file)))
+                (message "CONFIG_%s defined in: %s" option display-path))
+            (message "CONFIG_%s: No source file information available" option)))
       (message "No configuration option found on this line"))))
 
 (defvar linconf-invalid-overlays '()
@@ -1441,21 +1477,23 @@ Supports glob patterns and variable substitution."
               (setq queue (append queue sources)))))))
     (nreverse files)))
 
-(defun linconf-parse-kconfig-option (lines entry-type)
+(defun linconf-parse-kconfig-option (lines &optional entry-type source-file)
   "Parse a single config option from LINES, return (name . plist).
-ENTRY-TYPE can be 'config, 'menuconfig, 'choice, or 'comment."
-  (let ((name nil)
-        (type nil)
-        (help nil)
-        (depends nil)
-        (select nil)
-        (default nil)
-        (range nil)
-        (choices nil)
-        (in-help nil)
-        (is-menuconfig (eq entry-type 'menuconfig))
-        (is-comment (eq entry-type 'comment))
-        (comment-text nil))
+ENTRY-TYPE can be 'config, 'menuconfig, 'choice, or 'comment (defaults to 'config).
+SOURCE-FILE is the path to the Kconfig file containing this option."
+  (let* ((entry-type (or entry-type 'config))
+         (name nil)
+         (type nil)
+         (help nil)
+         (depends nil)
+         (select nil)
+         (default nil)
+         (range nil)
+         (choices nil)
+         (in-help nil)
+         (is-menuconfig (eq entry-type 'menuconfig))
+         (is-comment (eq entry-type 'comment))
+         (comment-text nil))
     (dolist (line lines)
       (cond
        ;; Handle comment declaration
@@ -1502,9 +1540,9 @@ ENTRY-TYPE can be 'config, 'menuconfig, 'choice, or 'comment."
        ((and (eq entry-type 'choice) (string-match "^[ \t]+config \\([A-Z0-9_]+\\)" line))
         (push (match-string 1 line) choices))))
     (when name
-      (cons name (list :type (cond 
+      (cons name (list :type (cond
                              (is-comment 'comment)
-                             (is-menuconfig 'menuconfig) 
+                             (is-menuconfig 'menuconfig)
                              (t type))
                        :help help
                        :depends depends
@@ -1514,7 +1552,8 @@ ENTRY-TYPE can be 'config, 'menuconfig, 'choice, or 'comment."
                        :choices (nreverse choices)
                        :menuconfig is-menuconfig
                        :comment is-comment
-                       :comment-text comment-text)))))
+                       :comment-text comment-text
+                       :source-file source-file)))))
 
 (defun linconf-preprocess-continuations (content)
   "Preprocess CONTENT to handle line continuations (backslash at end of line)."
@@ -1589,7 +1628,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
              ((string-match "^choice" line)
               (when current-config
                 ;; Finish previous config
-                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
                   (when option (push option options))))
               (setq current-choice (list line)
                     choice-options '()
@@ -1602,7 +1641,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
               (when current-choice
                 ;; Process any remaining config before ending choice
                 (when current-config
-                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
                     (when option (push option options))))
                 ;; Create phantom entries for individual choice options
                 (dolist (choice-opt choice-options)
@@ -1628,7 +1667,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
              ((string-match "^comment\\s-+\"\\([^\"]+\\)\"" line)
               (when current-config
                 ;; Finish previous config
-                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
                   (when option (push option options))))
               (setq current-config (list line)
                     in-config t
@@ -1639,7 +1678,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
               (let ((config-name (match-string 1 line))) ; Save match immediately
                 (when current-config
                   ;; Finish previous config
-                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
                     (when option (push option options))))
                 (setq current-config (list line)
                       in-config t
@@ -1652,7 +1691,7 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
               (let ((menuconfig-name (match-string 1 line))) ; Save match immediately
                 (when current-config
                   ;; Finish previous config
-                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                  (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
                     (when option (push option options))))
                 (setq current-config (list line)
                       in-config t
@@ -1667,14 +1706,14 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
              ((and in-config (not (string-match "^[ \t]*$" line))
                    (not (string-match "^\\(config\\|menuconfig\\|choice\\|endchoice\\|menu\\|endmenu\\|source\\)" line)))
               (when current-config
-                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+                (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
                   (when option (push option options))))
               (setq current-config nil
                     in-config nil)))))
         
         ;; Handle any remaining config at end of file
         (when current-config
-          (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type)))
+          (let ((option (linconf-parse-kconfig-option (nreverse current-config) config-type file)))
             (when option (push option options))))
         
         ;; Handle any remaining choice at end of file

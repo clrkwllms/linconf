@@ -31,6 +31,7 @@ C-c y/m/u - Set to y/m/unset
 C-c s/n/h - Set string/number/hex
 C-c d    - Show dependencies
 C-c C-d  - Simulate config change
+C-c f    - Show source file path
 C-c l/w/r - Load/write/reload config
 C-c v    - Validate current option
 C-c C-v  - Validate all options
@@ -56,7 +57,7 @@ C-c C-v  - Validate all options
 - Choice group and select chain handling
 - Conditional construct support (if/endif)
 
-## Current Status (Phase 6 Complete + Comprehensive Testing Infrastructure ✅)
+## Current Status (Phase 6 Complete + Kconfig Source Path Display ✅)
 
 ### Completed Features
 1. **Phase 1**: Extended key bindings with comprehensive config manipulation ✅
@@ -78,12 +79,18 @@ C-c C-v  - Validate all options
    - **ACHIEVEMENT**: 95.52% validation success rate across all architectures
    - **PERFORMANCE**: 390,927 options validated in 5.28 seconds (~71,000 options/second)
    - **INFRASTRUCTURE**: Professional wrapper script and complete testing documentation
+7. **Kconfig Source Path Display** ✅
+   - Source file tracking during Kconfig parsing with `:source-file` metadata
+   - Interactive command `linconf-show-source-file` (C-c f) to display source paths
+   - Enhanced help text showing source file information
+   - Intelligent path display (relative paths for kernel source, filename for others)
+   - Comprehensive test suite with functional programming principles
 
 ### Next Development Priorities
-1. **Kconfig Source File Display**: Show source file paths for options in help text - **TOP PRIORITY**
-2. **Advanced UI Enhancements**: Minibuffer improvements, dependency suggestions
-3. **Interactive Features**: Choice group selection, dependency resolution
-4. **Performance Optimization**: Large kernel tree handling
+1. **Advanced UI Enhancements**: Minibuffer improvements, dependency suggestions
+2. **Interactive Features**: Choice group selection, dependency resolution
+3. **Performance Optimization**: Large kernel tree handling
+4. **Documentation Integration**: Link help text to online kernel documentation
 
 ## Testing Strategy
 - **Comprehensive Test Suite**: 19 test files with full architecture coverage
