@@ -245,7 +245,7 @@ Returns t if data is available, nil if no kernel source path is configured."
              (file-directory-p linconf-kernel-source-path)
              (= (hash-table-count linconf-kconfig-options) 0))
     (message "Loading Kconfig data automatically...")
-    (linconf-load-kconfig-data))
+    (linconf-load-kconfig-data linconf-detected-architecture))
   (and linconf-kernel-source-path
        (> (hash-table-count linconf-kconfig-options) 0)))
 
@@ -1505,7 +1505,7 @@ SOURCE-FILE is the path to the Kconfig file containing this option."
        ((string-match "^[ \t]*\\(menu\\)?config[ \t]+\\([A-Z0-9_]+\\)" line)
         (setq name (match-string 2 line)))
        ;; Handle type declarations (but not in help text)
-       ((and (not in-help) (string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)\\b\\(?: \"\\([^\"]*\\)\"\\)?" line))
+       ((and (not in-help) (string-match "^[ \t]+\\(bool\\|tristate\\|string\\|int\\|hex\\)\\b\\(?: \"\\([^\"]*\\)\"\\)?\\(?: if .*\\)?" line))
         (setq type (intern (match-string 1 line))))
        ;; Handle def_bool and def_tristate (type + default combined)
        ((string-match "^[ \t]+def_\\(bool\\|tristate\\)\\s-+\\(.+\\)" line)
@@ -1727,8 +1727,10 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
         
         (nreverse options)))))
 
-(defun linconf-load-kconfig-data ()
-  "Load and parse all Kconfig files from kernel source tree."
+(defun linconf-load-kconfig-data (&optional target-arch)
+  "Load and parse all Kconfig files from kernel source tree.
+TARGET-ARCH can be specified to load architecture-specific Kconfig files.
+If nil, detects architecture from kernel source tree."
   (interactive)
   (when linconf-kernel-source-path
     (unless (file-directory-p linconf-kernel-source-path)
@@ -1737,9 +1739,13 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
     (clrhash linconf-kconfig-options)
     (clrhash linconf-config-values)
     (clrhash linconf-select-chains)
-    
-    ;; Initialize some basic config values based on detected architecture
-    (let ((arch (linconf-detect-architecture linconf-kernel-source-path)))
+
+    ;; Determine target architecture - use provided arch or detect from source
+    (let ((arch (or target-arch
+                    linconf-detected-architecture
+                    (linconf-detect-architecture linconf-kernel-source-path))))
+
+      ;; Initialize some basic config values based on detected architecture
       (pcase arch
         ("x86" (linconf-set-config-value "X86" t)
                (linconf-set-config-value "X86_64" t)
@@ -1747,14 +1753,32 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
         ("arm64" (linconf-set-config-value "ARM64" t)
                  (linconf-set-config-value "64BIT" t))
         ("arm" (linconf-set-config-value "ARM" t))
-        (_ nil)))
-    
-    ;; Set some common defaults
-    (linconf-set-config-value "EXPERT" nil) ; Most users aren't experts
-    (linconf-set-config-value "COMPILE_TEST" nil) ; Usually disabled
-    (let ((kconfig-files (linconf-collect-kconfig-files linconf-kernel-source-path))
-          (total-options 0))
-      (dolist (file kconfig-files)
+        ("riscv" (linconf-set-config-value "RISCV" t)
+                 (linconf-set-config-value "64BIT" t))
+        ("s390" (linconf-set-config-value "S390" t)
+                (linconf-set-config-value "64BIT" t))
+        ("powerpc" (linconf-set-config-value "PPC" t)
+                   (linconf-set-config-value "PPC64" t)
+                   (linconf-set-config-value "64BIT" t))
+        (_ nil))
+
+      ;; Set some common defaults
+      (linconf-set-config-value "EXPERT" nil) ; Most users aren't experts
+      (linconf-set-config-value "COMPILE_TEST" nil) ; Usually disabled
+
+      ;; Collect main Kconfig files
+      (let ((kconfig-files (linconf-collect-kconfig-files linconf-kernel-source-path))
+            (total-options 0))
+
+        ;; Add architecture-specific Kconfig file if it exists
+        (when arch
+          (let ((arch-kconfig (expand-file-name (format "arch/%s/Kconfig" arch)
+                                               linconf-kernel-source-path)))
+            (when (file-readable-p arch-kconfig)
+              (push arch-kconfig kconfig-files)
+              (message "Including architecture-specific Kconfig: arch/%s/Kconfig" arch))))
+
+        (dolist (file kconfig-files)
         (let ((options (linconf-parse-kconfig-file file)))
           (when (> (length options) 0)
             (message "Found %d options in %s" (length options) file))
@@ -1796,8 +1820,8 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
           (message "Loaded .config with %d configured options" 
                    (hash-table-count linconf-config-values))))
       
-      (message "Loaded %d options from %d Kconfig files"
-               total-options (length kconfig-files)))))
+        (message "Loaded %d options from %d Kconfig files"
+                 total-options (length kconfig-files))))))
 
 ;;;###autoload
 (define-derived-mode linconf-mode fundamental-mode "linconf"
@@ -1816,7 +1840,12 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
         (setq linconf-detected-architecture detected-arch)
         (linconf-set-architecture-variables detected-arch)
         (force-mode-line-update)
-        (message "Detected architecture: %s" detected-arch))))
+        (message "Detected architecture: %s" detected-arch)
+        ;; Reload Kconfig data with the detected architecture if kernel source is available
+        (when (and linconf-kernel-source-path
+                   (file-directory-p linconf-kernel-source-path))
+          (message "Reloading Kconfig data for architecture: %s" detected-arch)
+          (linconf-load-kconfig-data detected-arch)))))
   (font-lock-mode 1))
 
 ;;;###autoload

@@ -31,6 +31,8 @@
         ;; Open file and run validation
         (with-temp-buffer
           (insert-file-contents config-file)
+          ;; Set buffer-file-name so architecture detection works
+          (setq buffer-file-name config-file)
           (linconf-mode)
           (linconf-validate-all-options))
 
