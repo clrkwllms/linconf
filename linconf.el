@@ -258,10 +258,18 @@ Returns (valid . error-message) where valid is t/nil and error-message explains 
          (option-range (when kconfig-info (plist-get kconfig-info :range))))
 
     (if (not kconfig-info)
-        ;; No Kconfig info - allow any value but warn
-        (cons t (if linconf-kernel-source-path
-                    (format "Warning: No Kconfig definition found for %s" option)
-                  (format "Warning: %s not validated (no kernel source path set)" option)))
+        ;; No Kconfig info - check for vendor-specific options
+        (let ((vendor-info (linconf-is-vendor-specific-option option)))
+          (if vendor-info
+              ;; Create phantom entry for vendor-specific option and validate normally
+              (progn
+                (linconf-create-phantom-vendor-option option vendor-info)
+                ;; Recursively validate now that we have the option info
+                (linconf-validate-option-value option value))
+            ;; Not vendor-specific - treat as missing
+            (cons t (if linconf-kernel-source-path
+                        (format "Warning: No Kconfig definition found for %s" option)
+                      (format "Warning: %s not validated (no kernel source path set)" option)))))
 
       ;; Validate based on option type
       (cond
@@ -409,6 +417,26 @@ If HIGHLIGHT is non-nil, also highlight invalid configurations."
         (insert (format "Config file: %s\n" config-file-name)))
       (when linconf-detected-architecture
         (insert (format "Architecture: %s\n" linconf-detected-architecture)))
+
+      ;; Add kernel version compatibility information
+      (when (and config-file-name linconf-kernel-source-path)
+        (let ((config-version (linconf-detect-config-kernel-version config-file-name))
+              (source-version (linconf-detect-source-kernel-version linconf-kernel-source-path)))
+          (when config-version
+            (insert (format "Config kernel version: %s\n" config-version)))
+          (when source-version
+            (insert (format "Source kernel version: %s\n" source-version)))
+          (when (and config-version source-version)
+            (let ((comparison (linconf-compare-kernel-versions source-version config-version)))
+              (cond
+               ((< comparison 0)
+                (insert (format "⚠ VERSION MISMATCH: Source (%s) older than config (%s)\n" source-version config-version))
+                (insert (format "   Many missing option warnings are expected due to version differences.\n")))
+               ((> comparison 0)
+                (insert (format "ℹ INFO: Source (%s) newer than config (%s) - validation should be complete.\n" source-version config-version)))
+               (t
+                (insert (format "✓ Kernel versions match - validation is fully accurate.\n"))))))))
+
       (insert (format "Valid options: %d\n" valid-count))
       (insert (format "Errors: %d\n" (length errors)))
       (insert (format "Warnings: %d\n\n" (length warnings)))
@@ -1845,8 +1873,183 @@ If nil, detects architecture from kernel source tree."
         (when (and linconf-kernel-source-path
                    (file-directory-p linconf-kernel-source-path))
           (message "Reloading Kconfig data for architecture: %s" detected-arch)
-          (linconf-load-kconfig-data detected-arch)))))
+          (linconf-load-kconfig-data detected-arch)
+          ;; Check for kernel version compatibility issues
+          (linconf-check-kernel-version-compatibility)))))
   (font-lock-mode 1))
+
+(defvar linconf-vendor-specific-options
+  '(;; RedHat/RHEL specific options
+    ("RH_AUTOMOTIVE" :type bool :vendor "RedHat" :description "RedHat automotive variant configuration")
+    ("RH_KABI_SIZE_ALIGN_CHECKS" :type bool :vendor "RedHat" :description "RedHat KABI size alignment checks")
+    ("RHEL_DIFFERENCES" :type bool :vendor "RedHat" :description "RHEL-specific differences")
+    ("NETFILTER_XTABLES_LEGACY" :type bool :vendor "RedHat" :description "Legacy xtables support")
+
+    ;; Version-specific options that may be missing in older kernels
+    ("KUNIT_DEFAULT_TIMEOUT" :type int :version "6.17" :description "KUnit default test timeout")
+    ("RATELIMIT_KUNIT_TEST" :type tristate :version "6.17" :description "Rate limiting KUnit tests")
+    ("TEST_KEXEC_HANDOVER" :type tristate :version "6.17" :description "Kexec handover test module")
+    ("SEQ_BUF_KUNIT_TEST" :type tristate :version "6.17" :description "Seq buffer KUnit tests")
+    ("EPROBE_EVENTS" :type bool :version "6.17" :description "Enable eprobe events")
+    ("TRACEFS_AUTOMOUNT_DEPRECATED" :type bool :version "6.17" :description "Deprecated tracefs automount")
+
+    ;; ARM64 platform-specific options
+    ("ARM64_BRBE" :type bool :arch "arm64" :version "6.17" :description "ARM64 Branch Record Buffer Extension")
+    ("ARM_GIC_V5" :type bool :arch "arm64" :version "6.17" :description "ARM GIC version 5 support")
+    ("ARM_GIC_ITS_PARENT" :type bool :arch "arm64" :version "6.17" :description "ARM GIC ITS parent support")
+    ("PTDUMP_STAGE2_DEBUGFS" :type bool :arch "arm64" :description "Stage 2 page table dumping via debugfs")
+    ("NVHE_EL2_DEBUG" :type bool :arch "arm64" :description "Non-VHE EL2 debug support")
+
+    ;; Crypto library options
+    ("CRYPTO_LIB_BENCHMARK" :type bool :version "6.17" :description "Crypto library benchmarking")
+    ("CRYPTO_LIB_BENCHMARK_VISIBLE" :type bool :version "6.17" :description "Make crypto benchmarks visible")
+    ("CRYPTO_LIB_SHA512_KUNIT_TEST" :type tristate :version "6.17" :description "SHA512 library KUnit tests")
+    ("CRYPTO_LIB_SHA256_KUNIT_TEST" :type tristate :version "6.17" :description "SHA256 library KUnit tests")
+    ("CRYPTO_LIB_SHA1_KUNIT_TEST" :type tristate :version "6.17" :description "SHA1 library KUnit tests")
+    ("CRYPTO_LIB_POLY1305_KUNIT_TEST" :type tristate :version "6.17" :description "Poly1305 library KUnit tests")
+
+    ;; Device-specific options
+    ("PHY_QCOM_M31_EUSB" :type tristate :version "6.17" :description "Qualcomm M31 eUSB PHY driver")
+    ("PWM_ARGON_FAN_HAT" :type tristate :version "6.17" :description "Argon Fan HAT PWM driver")
+    ("MISC_RP1" :type tristate :version "6.17" :description "Raspberry Pi RP1 misc driver")
+
+    ;; Platform arch selections - these are typically choice options
+    ("ARCH_ZYNQMP" :type bool :arch "arm64" :description "Xilinx ZynqMP platform")
+    ("ARCH_XGENE" :type bool :arch "arm64" :description "Applied Micro X-Gene platform")
+    ("ARCH_VISCONTI" :type bool :arch "arm64" :description "Toshiba Visconti platform")
+    ("ARCH_TEGRA" :type bool :arch "arm64" :description "NVIDIA Tegra platform")
+    ("ARCH_QCOM" :type bool :arch "arm64" :description "Qualcomm platform")
+    ("ARCH_ROCKCHIP" :type bool :arch "arm64" :description "Rockchip platform")
+    ("ARCH_RENESAS" :type bool :arch "arm64" :description "Renesas platform")
+    ("ARCH_REALTEK" :type bool :arch "arm64" :description "Realtek platform")
+    ("ARCH_MVEBU" :type bool :arch "arm64" :description "Marvell EBU platform")
+    ("ARCH_MEDIATEK" :type bool :arch "arm64" :description "MediaTek platform")
+    ("ARCH_HISI" :type bool :arch "arm64" :description "HiSilicon platform")
+    ("ARCH_EXYNOS" :type bool :arch "arm64" :description "Samsung Exynos platform")
+    ("ARCH_BCM" :type bool :arch "arm64" :description "Broadcom platform")
+    ("ARCH_APPLE" :type bool :arch "arm64" :description "Apple Silicon platform")
+    ("ARCH_ALPINE" :type bool :arch "arm64" :description "Annapurna Labs Alpine platform"))
+  "List of vendor-specific and version-specific Kconfig options.
+Each entry is (OPTION-NAME :key value ...) with possible keys:
+:type - Option type (bool, tristate, string, int, hex)
+:vendor - Vendor name (RedHat, SUSE, etc.)
+:version - Minimum kernel version
+:arch - Required architecture
+:description - Human-readable description")
+
+(defun linconf-is-vendor-specific-option (option)
+  "Check if OPTION is a known vendor-specific option.
+Returns option info if found, nil otherwise."
+  (assoc option linconf-vendor-specific-options))
+
+(defun linconf-create-phantom-vendor-option (option option-info)
+  "Create a phantom entry for a vendor-specific option."
+  (let ((type (plist-get (cdr option-info) :type))
+        (description (plist-get (cdr option-info) :description))
+        (vendor (plist-get (cdr option-info) :vendor))
+        (version (plist-get (cdr option-info) :version))
+        (arch (plist-get (cdr option-info) :arch)))
+    (puthash option
+             (list :type type
+                   :help (format "%s%s%s%s"
+                               (or description (format "Vendor-specific option: %s" option))
+                               (if vendor (format " (Vendor: %s)" vendor) "")
+                               (if version (format " (Min version: %s)" version) "")
+                               (if arch (format " (Architecture: %s)" arch) ""))
+                   :phantom t
+                   :vendor-specific t
+                   :vendor vendor
+                   :min-version version
+                   :required-arch arch)
+             linconf-kconfig-options)))
+
+(defun linconf-detect-config-kernel-version (config-file)
+  "Detect kernel version from config file header.
+Returns version string or nil if not found."
+  (when (file-readable-p config-file)
+    (with-temp-buffer
+      (insert-file-contents config-file nil 0 1000) ; Read first 1000 chars
+      (goto-char (point-min))
+      (cond
+       ;; Look for "Linux/arch X.Y.Z Kernel Configuration" format
+       ((re-search-forward "Linux/[a-z0-9_]+ \\([0-9]+\\.[0-9]+\\.[0-9]+[^[:space:]]*\\) Kernel Configuration" nil t)
+        (match-string 1))
+       ;; Look for standalone version patterns like "6.17.0-rc6"
+       ((re-search-forward "^# [0-9]+\\.[0-9]+\\.[0-9]+[^[:space:]]*$" nil t)
+        (substring (match-string 0) 2)) ; Remove "# " prefix
+       (t nil)))))
+
+(defun linconf-detect-source-kernel-version (kernel-source-path)
+  "Detect kernel version from source tree Makefile.
+Returns version string or nil if not found."
+  (when (and kernel-source-path (file-directory-p kernel-source-path))
+    (let ((makefile (expand-file-name "Makefile" kernel-source-path)))
+      (when (file-readable-p makefile)
+        (with-temp-buffer
+          (insert-file-contents makefile nil 0 2000) ; Read first 2000 chars
+          (goto-char (point-min))
+          (let (version patchlevel sublevel extraversion)
+            (when (re-search-forward "^VERSION = \\([0-9]+\\)" nil t)
+              (setq version (match-string 1)))
+            (when (re-search-forward "^PATCHLEVEL = \\([0-9]+\\)" nil t)
+              (setq patchlevel (match-string 1)))
+            (when (re-search-forward "^SUBLEVEL = \\([0-9]+\\)" nil t)
+              (setq sublevel (match-string 1)))
+            (when (re-search-forward "^EXTRAVERSION = \\(.*\\)" nil t)
+              (setq extraversion (match-string 1)))
+            (when (and version patchlevel sublevel)
+              (concat version "." patchlevel "." sublevel
+                      (if (and extraversion (not (string-empty-p extraversion)))
+                          extraversion "")))))))))
+
+(defun linconf-compare-kernel-versions (version1 version2)
+  "Compare two kernel version strings.
+Returns -1 if version1 < version2, 0 if equal, 1 if version1 > version2.
+Handles formats like '6.16.5', '6.17.0-rc6', etc."
+  (if (or (null version1) (null version2))
+      0 ; Treat nil as equal
+    (let* ((v1-parts (split-string (replace-regexp-in-string "-.*" "" version1) "\\."))
+           (v2-parts (split-string (replace-regexp-in-string "-.*" "" version2) "\\."))
+           (max-parts (max (length v1-parts) (length v2-parts))))
+      (catch 'done
+        (dotimes (i max-parts)
+          (let ((part1 (if (< i (length v1-parts))
+                          (string-to-number (nth i v1-parts)) 0))
+                (part2 (if (< i (length v2-parts))
+                          (string-to-number (nth i v2-parts)) 0)))
+            (cond
+             ((< part1 part2) (throw 'done -1))
+             ((> part1 part2) (throw 'done 1)))))
+        0)))) ; All parts equal
+
+(defun linconf-check-kernel-version-compatibility ()
+  "Check compatibility between config file and kernel source versions.
+Display warnings if versions are mismatched and return compatibility info."
+  (when (and buffer-file-name linconf-kernel-source-path)
+    (let ((config-version (linconf-detect-config-kernel-version buffer-file-name))
+          (source-version (linconf-detect-source-kernel-version linconf-kernel-source-path)))
+      (when (and config-version source-version)
+        (let ((comparison (linconf-compare-kernel-versions source-version config-version)))
+          (cond
+           ((< comparison 0) ; source older than config
+            (message "⚠ WARNING: Kernel source (%s) is older than config (%s). Some options may be missing."
+                     source-version config-version)
+            (list :status 'source-older :config-version config-version :source-version source-version))
+           ((> comparison 0) ; source newer than config
+            (message "ℹ INFO: Kernel source (%s) is newer than config (%s). Validation should be complete."
+                     source-version config-version)
+            (list :status 'source-newer :config-version config-version :source-version source-version))
+           (t ; versions match
+            (message "✓ Kernel source (%s) matches config version (%s)."
+                     source-version config-version)
+            (list :status 'compatible :config-version config-version :source-version source-version)))))
+      (when (and (not config-version) (not source-version))
+        (message "⚠ Could not determine kernel versions for compatibility check")
+        (list :status 'unknown))
+      (when config-version
+        (list :status 'config-only :config-version config-version))
+      (when source-version
+        (list :status 'source-only :source-version source-version)))))
 
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.config\\'" . linconf-mode))
