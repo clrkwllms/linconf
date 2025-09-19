@@ -2005,7 +2005,10 @@ If nil, detects architecture from kernel source tree."
     ("CRYPTO_LIB_SHA1_ARCH" :type bool :arch "arm64" :version "6.17" :description "Architecture-specific SHA1 library")
     ("KSTACK_ERASE" :type bool :version "6.17" :description "Kernel stack erasing on syscall exit")
     ("CC_HAS_SANCOV_STACK_DEPTH_CALLBACK" :type bool :version "6.17" :description "Compiler support for stack depth callback")
-    ("HAVE_ARCH_KSTACK_ERASE" :type bool :arch "arm64" :description "Architecture supports kernel stack erasing"))
+    ("HAVE_ARCH_KSTACK_ERASE" :type bool :arch "arm64" :description "Architecture supports kernel stack erasing")
+
+    ;; Memory management options (6.17+)
+    ("PAGE_BLOCK_MAX_ORDER" :type int :version "6.17" :range (1 . 10) :default 10 :description "Page Block Order Upper Limit"))
   "List of vendor-specific and version-specific Kconfig options.
 Each entry is (OPTION-NAME :key value ...) with possible keys:
 :type - Option type (bool, tristate, string, int, hex)
