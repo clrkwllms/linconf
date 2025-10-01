@@ -2718,7 +2718,18 @@ If nil, detects architecture from kernel source tree."
     ("RISCV_ISA_XTHEADVECTOR" :type bool :arch "riscv" :description "T-Head vector extension")
     ("RISCV_PLIC" :type bool :arch "riscv" :description "Platform-Level Interrupt Controller")
     ("SND_SOC_STARFIVE" :type tristate :arch "riscv" :description "StarFive SoC audio support")
-    ("SOC_STARFIVE" :type bool :arch "riscv" :description "StarFive SoC platform"))
+    ("SOC_STARFIVE" :type bool :arch "riscv" :description "StarFive SoC platform")
+
+    ("CRYPTO_CHACHA_S390" :type tristate :arch "s390" :description "ChaCha cipher using s390 CPACF instructions")
+    ("CRYPTO_CRC32_S390" :type tristate :arch "s390" :description "CRC-32 using s390 Vector Extension Facility")
+    ("CRYPTO_SHA1_S390" :type tristate :arch "s390" :description "SHA-1 using s390 CPACF instructions")
+    ("CRYPTO_SHA256_S390" :type tristate :arch "s390" :description "SHA-256 using s390 CPACF instructions")
+    ("CRYPTO_SHA512_S390" :type tristate :arch "s390" :description "SHA-512 using s390 CPACF instructions")
+    ("PACK_STACK" :type bool :arch "s390" :description "Pack kernel stack for s390")
+    ("PROTECTED_VIRTUALIZATION_GUEST" :type bool :arch "s390" :description "Protected virtualization guest support")
+    ("SCHED_BOOK" :type bool :arch "s390" :description "Book scheduling domain for s390")
+    ("TN3270_TTY" :type tristate :arch "s390" :description "TN3270 terminal emulator TTY driver")
+    ("ZCRYPT_MULTIDEVNODES" :type bool :arch "s390" :description "Multiple device nodes for zcrypt"))
   "List of vendor-specific and version-specific Kconfig options.
 Each entry is (OPTION-NAME :key value ...) with possible keys:
 :type - Option type (bool, tristate, string, int, hex)
