@@ -768,19 +768,13 @@ Returns list of options forming the path, or nil if no path exists."
                       (throw 'path-found (cons from sub-path)))))
                 nil))))))))
 
-(defvar linconf-select-chains (make-hash-table :test 'equal)
-  "Hash table mapping config options to their select statements.
-Key: option name, Value: list of (selected-option . condition) pairs.")
-
-(defun linconf-add-select-statement (selector selected &optional condition)
-  "Add a select statement: SELECTOR selects SELECTED [if CONDITION]."
-  (let ((current-selects (gethash selector linconf-select-chains '())))
-    (push (cons selected condition) current-selects)
-    (puthash selector current-selects linconf-select-chains)))
-
 (defun linconf-get-select-statements (option)
-  "Get all options that OPTION selects."
-  (gethash option linconf-select-chains '()))
+  "Get all options that OPTION selects.
+Returns list of (selected-option . condition) pairs from embedded :selects chain."
+  (let ((option-info (gethash option linconf-kconfig-options)))
+    (if option-info
+        (plist-get option-info :selects)
+      '())))
 
 (defun linconf-resolve-select-chains (option new-value &optional visited)
   "Resolve select chains when OPTION is set to NEW-VALUE.
@@ -827,14 +821,12 @@ Returns list of (option . value) pairs that should be set."
           (linconf-set-config-value selected-option selected-value))))))
 
 (defun linconf-find-reverse-selects (option)
-  "Find all options that select the given OPTION."
-  (let ((reverse-selects '()))
-    (maphash (lambda (selector select-list)
-               (dolist (select-pair select-list)
-                 (when (equal (car select-pair) option)
-                   (push (cons selector (cdr select-pair)) reverse-selects))))
-             linconf-select-chains)
-    reverse-selects))
+  "Find all options that select the given OPTION.
+Returns list of (selector-option . condition) pairs from embedded :selected-by chain."
+  (let ((option-info (gethash option linconf-kconfig-options)))
+    (if option-info
+        (plist-get option-info :selected-by)
+      '())))
 
 (defun linconf-set-config-with-chains (option value)
   "Set configuration OPTION to VALUE and resolve select chains."
@@ -857,15 +849,20 @@ Returns list of (option . value) pairs that should be set."
 
 (defun linconf-get-dependency-info (option)
   "Get comprehensive dependency information for OPTION.
-Returns plist with :depends, :selects, :selected-by, :conflicts."
+Returns plist with :depends, :depends-on, :selects, :selected-by, :conflicts.
+All data is retrieved directly from embedded chains in linconf-kconfig-options."
   (let* ((option-info (gethash option linconf-kconfig-options))
          (depends (when option-info (plist-get option-info :depends)))
-         (selects (mapcar #'car (linconf-get-select-statements option)))
-         (selected-by (mapcar #'car (linconf-find-reverse-selects option)))
+         (depends-on (when option-info (plist-get option-info :depends-on)))
+         (selects-chain (when option-info (plist-get option-info :selects)))
+         (selected-by-chain (when option-info (plist-get option-info :selected-by)))
+         (selects (mapcar #'car selects-chain))
+         (selected-by (mapcar #'car selected-by-chain))
          (conflicts '())) ; TODO: Implement conflict detection
-    
+
     (list :depends depends
-          :selects selects  
+          :depends-on depends-on
+          :selects selects
           :selected-by selected-by
           :conflicts conflicts)))
 
@@ -1755,6 +1752,87 @@ Handles config, menuconfig, choice/endchoice, and menu/endmenu blocks."
         
         (nreverse options)))))
 
+(defun linconf-build-selection-chains ()
+  "Build forward (:selects) and reverse (:selected-by) selection chains.
+Also extract :depends-on lists from :depends expressions.
+This consolidates selection chain data directly into linconf-kconfig-options,
+eliminating the need for a separate linconf-select-chains hash table."
+  (let ((all-options '()))
+    ;; First pass: collect all option names
+    (maphash (lambda (name _plist) (push name all-options))
+             linconf-kconfig-options)
+
+    ;; Second pass: process each option
+    (dolist (option-name all-options)
+      (let* ((option-plist (gethash option-name linconf-kconfig-options))
+             (select-list (plist-get option-plist :select))
+             (depends-expr (plist-get option-plist :depends))
+             (selects-chain '())
+             (depends-on-list '()))
+
+        ;; Build :selects forward chain from :select data
+        ;; Format: list of (selected-option . condition) pairs
+        (when select-list
+          (dolist (select-stmt select-list)
+            (if (consp select-stmt)
+                ;; Already in (option . condition) format
+                (push select-stmt selects-chain)
+              ;; Simple select without condition
+              (push (cons select-stmt nil) selects-chain))))
+
+        ;; Extract :depends-on list from :depends expression
+        (when depends-expr
+          (setq depends-on-list (linconf-extract-options-from-condition depends-expr)))
+
+        ;; Update the option with forward chains
+        (puthash option-name
+                 (plist-put (plist-put option-plist
+                                      :selects (nreverse selects-chain))
+                           :depends-on depends-on-list)
+                 linconf-kconfig-options)))
+
+    ;; Third pass: build :selected-by reverse chains
+    (dolist (selector-name all-options)
+      (let* ((selector-plist (gethash selector-name linconf-kconfig-options))
+             (selects-chain (plist-get selector-plist :selects)))
+        ;; For each option this selector selects, add reverse reference
+        (dolist (select-pair selects-chain)
+          (let* ((selected-name (car select-pair))
+                 (condition (cdr select-pair))
+                 (selected-plist (gethash selected-name linconf-kconfig-options)))
+            (when selected-plist
+              (let ((current-selected-by (plist-get selected-plist :selected-by)))
+                ;; Add this selector to the selected option's :selected-by list
+                (puthash selected-name
+                        (plist-put selected-plist
+                                  :selected-by
+                                  (cons (cons selector-name condition)
+                                        current-selected-by))
+                        linconf-kconfig-options)))))))))
+
+(defun linconf-apply-vendor-type-corrections ()
+  "Apply vendor-specific type corrections for known kernel patches.
+This handles cases where distributions (like RHEL) patch the mainline kernel
+to change option types (e.g., bool to tristate)."
+  (let ((corrections '(("TEST_MISC_MINOR" tristate "RHEL patches TEST_MISC_MINOR to tristate")))
+        (applied-count 0))
+    (dolist (correction corrections)
+      (let* ((option (nth 0 correction))
+             (new-type (nth 1 correction))
+             (reason (nth 2 correction))
+             (option-plist (gethash option linconf-kconfig-options)))
+        (when option-plist
+          (let ((old-type (plist-get option-plist :type)))
+            (when (and old-type (not (eq old-type new-type)))
+              (puthash option
+                      (plist-put option-plist :type new-type)
+                      linconf-kconfig-options)
+              (setq applied-count (1+ applied-count))
+              (message "Applied type correction: %s %s -> %s (%s)"
+                      option old-type new-type reason))))))
+    (when (> applied-count 0)
+      (message "Applied %d vendor-specific type corrections" applied-count))))
+
 (defun linconf-load-kconfig-data (&optional target-arch)
   "Load and parse all Kconfig files from kernel source tree.
 TARGET-ARCH can be specified to load architecture-specific Kconfig files.
@@ -1766,7 +1844,6 @@ If nil, detects architecture from kernel source tree."
     (message "Loading Kconfig data from %s..." linconf-kernel-source-path)
     (clrhash linconf-kconfig-options)
     (clrhash linconf-config-values)
-    (clrhash linconf-select-chains)
 
     ;; Determine target architecture - use provided arch or detect from source
     (let ((arch (or target-arch
@@ -1826,18 +1903,15 @@ If nil, detects architecture from kernel source tree."
                         (and new-type (not (eq new-type 'unknown)))
                         (and existing-type (eq existing-type 'unknown)))
                 (puthash option-name new-plist linconf-kconfig-options)))
-            (setq total-options (1+ total-options))
-            
-            ;; Process select statements for this option
-            (let ((option-name (car option))
-                  (option-plist (cdr option))
-                  (select-statements (plist-get (cdr option) :select)))
-              (dolist (select-stmt select-statements)
-                (if (consp select-stmt)
-                    ;; Conditional select: (selected-option . condition)
-                    (linconf-add-select-statement option-name (car select-stmt) (cdr select-stmt))
-                  ;; Simple select: selected-option
-                  (linconf-add-select-statement option-name select-stmt)))))))
+            (setq total-options (1+ total-options)))))
+
+      ;; Build selection chains after all options are loaded
+      (message "Building selection and dependency chains...")
+      (linconf-build-selection-chains)
+
+      ;; Apply vendor-specific type corrections for known kernel patches
+      (linconf-apply-vendor-type-corrections)
+
       (setq linconf-kconfig-loaded t)
       
       ;; Try to load existing .config file if it exists
@@ -1889,6 +1963,7 @@ If nil, detects architecture from kernel source tree."
     ("KUNIT_DEFAULT_TIMEOUT" :type int :version "6.17" :description "KUnit default test timeout")
     ("RATELIMIT_KUNIT_TEST" :type tristate :version "6.17" :description "Rate limiting KUnit tests")
     ("TEST_KEXEC_HANDOVER" :type tristate :version "6.17" :description "Kexec handover test module")
+    ("TEST_MISC_MINOR" :type tristate :vendor "rhel" :description "miscdevice KUnit test (RHEL tristate variant)")
     ("SEQ_BUF_KUNIT_TEST" :type tristate :version "6.17" :description "Seq buffer KUnit tests")
     ("EPROBE_EVENTS" :type bool :version "6.17" :description "Enable eprobe events")
     ("TRACEFS_AUTOMOUNT_DEPRECATED" :type bool :version "6.17" :description "Deprecated tracefs automount")
@@ -2008,7 +2083,403 @@ If nil, detects architecture from kernel source tree."
     ("HAVE_ARCH_KSTACK_ERASE" :type bool :arch "arm64" :description "Architecture supports kernel stack erasing")
 
     ;; Memory management options (6.17+)
-    ("PAGE_BLOCK_MAX_ORDER" :type int :version "6.17" :range (1 . 10) :default 10 :description "Page Block Order Upper Limit"))
+    ("PAGE_BLOCK_MAX_ORDER" :type int :version "6.17" :range (1 . 10) :default 10 :description "Page Block Order Upper Limit")
+
+    ;; ===== RHEL/Legacy Options Below =====
+    ;; Options removed from mainline kernel or RHEL-specific
+
+    ;; Removed/deprecated kernel options (no longer in mainline)
+    ("CLEANCACHE" :type bool :deprecated "5.11" :description "Transcendent memory cache (removed in 5.11)")
+    ("FRONTSWAP" :type bool :deprecated "5.11" :description "Transcendent memory swap support (removed in 5.11)")
+    ("EMBEDDED" :type bool :deprecated "5.4" :description "Configure standard kernel features (renamed to EXPERT)")
+    ("USELIB" :type bool :deprecated "5.1" :description "uselib syscall support (removed in 5.1)")
+    ("DECNET" :type tristate :deprecated "6.1" :description "DECnet protocol support (removed in 6.1)")
+    ("REISERFS_FS" :type tristate :deprecated "5.18" :description "Reiserfs filesystem (deprecated in 5.18)")
+    ("SYSV_FS" :type tristate :deprecated "6.6" :description "System V filesystem support (deprecated)")
+    ("EFI_VARS" :type bool :deprecated "5.5" :description "EFI variable support via sysfs (deprecated, use efivarfs)")
+    ("GEN_RTC" :type bool :deprecated "5.5" :description "Generic /dev/rtc emulation (removed)")
+    ("PRISM2_USB" :type tristate :deprecated "5.13" :description "Prism2 USB wireless driver (removed)")
+    ("QLGE" :type tristate :deprecated "5.18" :description "QLogic QLGE 10Gb Ethernet driver (removed in 5.18)")
+    ("BT_HS" :type bool :deprecated "5.8" :description "Bluetooth High Speed support (removed)")
+    ("BPFILTER" :type bool :deprecated "6.1" :description "BPF-based packet filtering framework (removed)")
+    ("MD_FAULTY" :type tristate :deprecated "5.15" :description "Faulty test module for MD (removed)")
+    ("MD_MULTIPATH" :type tristate :deprecated "5.8" :description "Multipath I/O support (removed)")
+    ("IXGB" :type tristate :deprecated "5.11" :description "Intel PRO/10GbE driver (removed)")
+    ("VIDEO_MEYE" :type tristate :deprecated "5.9" :description "Sony Vaio Picturebook Motion Eye driver (removed)")
+    ("USB_ZR364XX" :type tristate :deprecated "5.11" :description "USB ZR364XX camera support (removed)")
+    ("SCSI_DPT_I2O" :type tristate :deprecated "5.2" :description "Adaptec I2O RAID driver (removed)")
+    ("BLK_DEV_SX8" :type tristate :deprecated "5.11" :description "Promise SATA SX8 driver (removed)")
+    ("BLK_DEV_RSXX" :type tristate :deprecated "5.9" :description "IBM Flash Adapter 900GB driver (removed)")
+    ("NET_SB1000" :type tristate :deprecated "5.5" :description "General Instruments SB1000 driver (removed)")
+    ("CDROM_PKTCDVD" :type tristate :deprecated "5.13" :description "Packet writing on CD/DVD media (removed)")
+    ("CDROM_PKTCDVD_BUFFERS" :type int :deprecated "5.13" :description "Packet buffer count")
+    ("CDROM_PKTCDVD_WCACHE" :type bool :deprecated "5.13" :description "Enable write caching")
+
+    ;; Test and debug framework options
+    ("TEST_USER_COPY" :type tristate :description "Test user copy functions")
+    ("TEST_STRSCPY" :type tristate :description "Test strscpy functions")
+    ("TEST_STRING_HELPERS" :type tristate :description "Test string helper functions")
+    ("TEST_STACKINIT" :type tristate :description "Test stack variable initialization")
+    ("TEST_SIPHASH" :type tristate :description "Test siphash hash function")
+    ("TEST_SCANF" :type tristate :description "Test scanf implementation")
+    ("TEST_PRINTF" :type tristate :description "Test printf implementation")
+    ("TEST_OVERFLOW" :type tristate :description "Test arithmetic overflow checking")
+    ("TEST_HASH" :type tristate :description "Test hash table implementation")
+    ("TEST_CPUMASK" :type tristate :description "Test CPU mask operations")
+    ("INT_POW_TEST" :type tristate :version "6.17" :description "Integer power function tests")
+    ("KASAN_MODULE_TEST" :type tristate :description "KASAN module test")
+    ("STRING_SELFTEST" :type tristate :description "String function self-tests")
+    ("STRSCPY_KUNIT_TEST" :type tristate :description "strscpy KUnit tests")
+    ("STRCAT_KUNIT_TEST" :type tristate :description "strcat KUnit tests")
+    ("MEMCPY_SLOW_KUNIT_TEST" :type tristate :description "Slow memcpy KUnit tests")
+    ("CRC16_KUNIT_TEST" :type tristate :description "CRC16 KUnit tests")
+    ("CRC32_SELFTEST" :type tristate :description "CRC32 self-tests")
+    ("XARRAY_KUNIT" :type tristate :version "6.17" :description "XArray data structure KUnit tests")
+    ("PROVE_NVDIMM_LOCKING" :type bool :description "NVDIMM locking correctness checks")
+    ("PROVE_CXL_LOCKING" :type bool :description "CXL locking correctness checks")
+
+    ;; Crypto implementation and acceleration options
+    ("CRYPTO_BLAKE2S" :type tristate :description "BLAKE2s digest algorithm")
+    ("CRYPTO_CRC32C_INTEL" :type tristate :arch "x86" :description "CRC32c using x86 PCLMULQDQ instruction")
+    ("CRYPTO_CRC32C_VPMSUM" :type tristate :arch "powerpc" :description "CRC32c using PowerPC VPMSUM instructions")
+    ("CRYPTO_CRC32_PCLMUL" :type tristate :arch "x86" :description "CRC32 using x86 PCLMULQDQ instruction")
+    ("CRYPTO_CRCT10DIF" :type tristate :description "CRCT10DIF algorithm (for T10 DIF)")
+    ("CRYPTO_CRCT10DIF_PCLMUL" :type tristate :arch "x86" :description "CRCT10DIF using x86 PCLMULQDQ")
+    ("CRYPTO_CRCT10DIF_VPMSUM" :type tristate :arch "powerpc" :description "CRCT10DIF using PowerPC VPMSUM")
+    ("CRYPTO_DEV_HISTB_TRNG" :type tristate :deprecated "6.2" :description "HiSilicon STB TRNG driver (removed)")
+    ("CRYPTO_KEYWRAP" :type tristate :description "Key wrapping algorithm (RFC 3394/5649)")
+    ("CRYPTO_LIB_BLAKE2S" :type tristate :description "BLAKE2s library interface")
+    ("CRYPTO_MANAGER_EXTRA_TESTS" :type bool :description "Extra self-tests for crypto manager")
+    ("CRYPTO_POLY1305" :type tristate :description "Poly1305 authenticator algorithm")
+    ("CRYPTO_SHA1_SSSE3" :type tristate :arch "x86" :description "SHA1 using x86 SSSE3 instructions")
+    ("CRYPTO_SHA256_SSSE3" :type tristate :arch "x86" :description "SHA256 using x86 SSSE3 instructions")
+    ("CRYPTO_SHA512_SSSE3" :type tristate :arch "x86" :description "SHA512 using x86 SSSE3 instructions")
+    ("CRYPTO_SM2" :type tristate :description "SM2 elliptic curve public key algorithm")
+    ("CRYPTO_SM3" :type tristate :description "SM3 hash algorithm")
+    ("CRYPTO_STATS" :type bool :description "Crypto usage statistics")
+    ("CRYPTO_VMAC" :type tristate :description "VMAC Message Authentication Code")
+
+    ;; CRC implementation options
+    ("CRC32_BIT" :type bool :description "CRC32 bit-by-bit implementation")
+    ("CRC32_SARWATE" :type bool :description "CRC32 Sarwate (table-based) implementation")
+    ("CRC32_SLICEBY4" :type bool :description "CRC32 slice-by-4 implementation")
+    ("CRC32_SLICEBY8" :type bool :description "CRC32 slice-by-8 implementation")
+    ("CRC32_IMPL_BIT" :type bool :description "Select bit-by-bit CRC32 implementation")
+    ("CRC32_IMPL_SLICEBY1" :type bool :description "Select slice-by-1 CRC32 implementation")
+    ("CRC32_IMPL_SLICEBY4" :type bool :description "Select slice-by-4 CRC32 implementation")
+    ("CRC32_IMPL_SLICEBY8" :type bool :description "Select slice-by-8 CRC32 implementation")
+    ("CRC32_IMPL_ARCH_PLUS_SLICEBY1" :type bool :description "Arch CRC32 with slice-by-1 fallback")
+    ("CRC32_IMPL_ARCH_PLUS_SLICEBY8" :type bool :description "Arch CRC32 with slice-by-8 fallback")
+    ("CRC64_ROCKSOFT" :type tristate :description "CRC64 Rocksoft parameters")
+    ("CRC_T10DIF_IMPL_ARCH" :type bool :description "T10 DIF CRC architecture-specific implementation")
+    ("CRC_T10DIF_IMPL_GENERIC" :type bool :description "T10 DIF CRC generic implementation")
+
+    ;; RHEL-specific and vendor tuning options
+    ("SPECULATION_MITIGATIONS" :type bool :vendor "RedHat" :description "CPU vulnerability mitigations master switch")
+    ("PREEMPT_AUTO" :type bool :description "Automatic preemption mode selection")
+    ("RANDOMIZE_IDENTITY_BASE" :type bool :description "Randomize process identity base")
+    ("CMDLINE_FROM_BOOTLOADER" :type bool :description "Use kernel command line from bootloader")
+    ("TOOLCHAIN_DEFAULT_CPU" :type string :description "Default CPU type for toolchain")
+    ("BASE_FULL" :type bool :description "Full base kernel (non-embedded config)")
+
+    ;; Architecture-specific: x86
+    ("X86_5LEVEL" :type bool :arch "x86" :description "5-level paging support")
+    ("X86_CMPXCHG64" :type bool :arch "x86" :description "64-bit CMPXCHG instruction support")
+    ("X86_PLATFORM_DRIVERS_INTEL" :type bool :arch "x86" :description "Intel platform drivers")
+    ("X86_X32" :type bool :arch "x86" :deprecated "6.3" :description "x32 ABI support (deprecated)")
+    ("LEGACY_VSYSCALL_EMULATE" :type bool :arch "x86" :description "Emulate legacy vsyscalls")
+    ("MK8" :type bool :arch "x86" :description "Optimize for AMD K8")
+    ("MCORE2" :type bool :arch "x86" :description "Optimize for Intel Core 2")
+
+    ;; Architecture-specific: PowerPC
+    ("PPC_RTAS_FILTER" :type bool :arch "powerpc" :description "RTAS call filtering")
+    ("PPC_QUEUED_SPINLOCKS" :type bool :arch "powerpc" :description "Queued spinlock implementation")
+    ("PPC_PROT_SAO_LPAR" :type bool :arch "powerpc" :description "SAO protection for LPAR")
+    ("PPC_MICROWATT" :type bool :arch "powerpc" :description "Microwatt softcore support")
+    ("POWER10_CPU" :type bool :arch "powerpc" :description "POWER10 processor support")
+    ("POWERPC64_CPU" :type bool :arch "powerpc" :description "Generic 64-bit PowerPC support")
+    ("PMU_SYSFS" :type bool :arch "powerpc" :description "PMU sysfs interface")
+    ("OPAL_CORE" :type bool :arch "powerpc" :description "OPAL core dump support")
+    ("HTMDUMP" :type tristate :arch "powerpc" :description "Hardware transactional memory dumps")
+    ("VPA_PMU" :type bool :arch "powerpc" :description "VPA PMU support")
+
+    ;; Architecture-specific: S390
+    ("S390_MODULES_SANITY_TEST" :type tristate :arch "s390" :description "S390 module sanity tests")
+    ("S390_KPROBES_SANITY_TEST" :type tristate :arch "s390" :description "S390 kprobes sanity tests")
+    ("MARCH_Z16" :type bool :arch "s390" :description "Optimize for z16 architecture")
+    ("MARCH_Z17" :type bool :arch "s390" :description "Optimize for z17 architecture")
+    ("TUNE_Z16" :type bool :arch "s390" :description "Tune for z16 architecture")
+    ("TUNE_Z17" :type bool :arch "s390" :description "Tune for z17 architecture")
+
+    ;; Architecture-specific: ARM64
+    ("ARCH_BCM4908" :type bool :arch "arm64" :description "Broadcom BCM4908 platform")
+    ("ROCKCHIP_ERRATUM_3588001" :type bool :arch "arm64" :description "Rockchip RK3588 erratum workaround")
+    ("ROCKCHIP_ERRATUM_3568002" :type bool :arch "arm64" :description "Rockchip RK3568 erratum workaround")
+    ("AMPERE_ERRATUM_AC04_CPU_23" :type bool :arch "arm64" :description "Ampere AC04 CPU erratum workaround")
+    ("HISILICON_ERRATUM_162100801" :type bool :arch "arm64" :description "HiSilicon erratum 162100801 workaround")
+    ("HIPERDISPATCH_ON" :type bool :arch "s390" :description "Hyper-dispatch on by default")
+
+    ;; Security and SELinux options
+    ("SECURITY_SELINUX_DISABLE" :type bool :description "Allow disabling SELinux at boot")
+    ("SECURITY_SELINUX_CHECKREQPROT_VALUE" :type int :description "SELinux checkreqprot default value")
+    ("LOCK_DOWN_IN_EFI_SECURE_BOOT" :type bool :vendor "rhel" :description "Lock down kernel in EFI Secure Boot mode")
+    ("RANDOM_TRUST_CPU" :type bool :deprecated "6.2" :description "Trust CPU for RNG initialization (removed)")
+    ("RANDOM_TRUST_BOOTLOADER" :type bool :deprecated "6.2" :description "Trust bootloader for RNG seed (removed)")
+    ("AMD_MEM_ENCRYPT_ACTIVE_BY_DEFAULT" :type bool :arch "x86" :description "AMD memory encryption active by default")
+
+    ;; Memory management options
+    ("MEMCG_SWAP" :type bool :deprecated "6.1" :description "Memory cgroup swap extension (deprecated)")
+    ("MEMORY_HOTPLUG_DEFAULT_ONLINE" :type bool :description "Memory hotplug default online")
+    ("CMA_DEBUG" :type bool :description "CMA debug information")
+    ("HUGETLB_PAGE_FREE_VMEMMAP_DEFAULT_ON" :type bool :description "Free HugeTLB vmemmap by default")
+    ("RODATA_FULL_DEFAULT_ENABLED" :type bool :description "Full read-only data by default")
+    ("STACK_HASH_ORDER" :type int :description "Stack hash order")
+    ("STRICT_MM_TYPECHECKS" :type bool :description "Strict memory management type checks")
+
+    ;; Additional crypto options
+    ("CRYPTO_POLY1305_X86_64" :type tristate :arch "x86" :description "Poly1305 for x86_64")
+    ("CRYPTO_CURVE25519_X86" :type tristate :arch "x86" :description "Curve25519 for x86")
+    ("CRYPTO_CURVE25519" :type tristate :description "Curve25519 elliptic curve")
+    ("CRYPTO_CHACHA20_X86_64" :type tristate :arch "x86" :description "ChaCha20 stream cipher for x86_64")
+    ("CRYPTO_BLAKE2S_X86" :type tristate :arch "x86" :description "BLAKE2s for x86")
+
+    ;; Debug and tracing options
+    ("DEBUG_VM_VMACACHE" :type bool :deprecated "5.8" :description "VM cache debugging (removed)")
+    ("DEBUG_TIMEKEEPING" :type bool :description "Timekeeping debugging")
+    ("DEBUG_KMEMLEAK_TEST" :type tristate :description "Kmemleak testing module")
+    ("DEBUG_INFO_COMPRESSED" :type bool :deprecated "5.18" :description "Compressed debug info (removed)")
+    ("DEBUG_CREDENTIALS" :type bool :description "Debug credentials")
+    ("DEBUG_ALIGN_RODATA" :type bool :deprecated "5.10" :description "Align rodata (removed)")
+    ("FTRACE_MCOUNT_RECORD" :type bool :description "Record mcount call sites")
+    ("SCHED_DEBUG" :type bool :description "Scheduler debugging")
+
+    ;; Network and netfilter options
+    ("NFT_OBJREF" :type tristate :deprecated "5.18" :description "Nftables object reference (removed)")
+    ("NFT_COUNTER" :type tristate :deprecated "5.16" :description "Nftables counter (now built-in)")
+    ("NFSD_V3" :type bool :deprecated "6.2" :description "NFSv3 server support (always enabled)")
+    ("NF_FLOW_TABLE_IPV6" :type tristate :deprecated "5.12" :description "IPv6 flow table (merged into NF_FLOW_TABLE)")
+    ("NF_FLOW_TABLE_IPV4" :type tristate :deprecated "5.12" :description "IPv4 flow table (merged into NF_FLOW_TABLE)")
+    ("NF_CT_PROTO_DCCP" :type bool :deprecated "5.13" :description "DCCP connection tracking protocol support")
+    ("IP_NF_TARGET_CLUSTERIP" :type tristate :deprecated "6.3" :description "CLUSTERIP target (removed)")
+    ("IP_DCCP" :type tristate :description "DCCP protocol support")
+
+    ;; Mellanox network driver options
+    ("MLX5_TLS" :type bool :description "Mellanox 5th generation TLS offload")
+    ("MLX5_IPSEC" :type bool :description "Mellanox 5th generation IPsec offload")
+    ("MLX5_FPGA_TLS" :type bool :deprecated "5.16" :description "Mellanox FPGA TLS (removed)")
+    ("MLX5_FPGA_IPSEC" :type bool :deprecated "5.16" :description "Mellanox FPGA IPsec (removed)")
+    ("MLX5_ACCEL" :type bool :description "Mellanox acceleration library")
+
+    ;; PSTORE compression options
+    ("PSTORE_ZSTD_COMPRESS" :type bool :description "PSTORE zstd compression")
+    ("PSTORE_LZO_COMPRESS" :type bool :description "PSTORE LZO compression")
+    ("PSTORE_LZ4HC_COMPRESS" :type bool :description "PSTORE LZ4HC compression")
+    ("PSTORE_LZ4_COMPRESS" :type bool :description "PSTORE LZ4 compression")
+    ("PSTORE_DEFLATE_COMPRESS" :type bool :description "PSTORE deflate compression")
+    ("PSTORE_DEFLATE_COMPRESS_DEFAULT" :type bool :description "PSTORE deflate as default")
+    ("PSTORE_842_COMPRESS" :type bool :description "PSTORE 842 compression")
+
+    ;; DRM/Graphics options
+    ("DRM_XE_SIMPLE_ERROR_CAPTURE" :type bool :version "6.8" :description "Intel Xe simple error capture")
+    ("DRM_XE_LARGE_GUC_BUFFER" :type bool :version "6.8" :description "Intel Xe large GuC buffer")
+    ("DRM_XE_DEVMEM_MIRROR" :type bool :version "6.8" :description "Intel Xe device memory mirroring")
+    ("DRM_VMWGFX_FBCON" :type bool :description "VMware SVGA framebuffer console")
+    ("DRM_LEGACY" :type bool :deprecated "6.8" :description "Legacy DRM support (deprecated)")
+    ("DRM_I2C_SIL164" :type tristate :deprecated "6.6" :description "Silicon Image sil164 TMDS transmitter (removed)")
+    ("DRM_I2C_NXP_TDA9950" :type tristate :deprecated "6.6" :description "NXP TDA9950 CEC driver (removed)")
+    ("DRM_I2C_CH7006" :type tristate :deprecated "6.6" :description "Chrontel ch7006 TV encoder (removed)")
+    ("DRM_DP_CEC" :type bool :description "DisplayPort CEC-Tunneling-over-AUX support")
+    ("DRM_DP_AUX_CHARDEV" :type bool :description "DRM DP AUX character device")
+    ("DRM_DISPLAY_DEBUG_DP_TUNNEL_STATE" :type bool :version "6.10" :description "DP tunnel state debugging")
+    ("DRM_DEBUG_SELFTEST" :type tristate :description "DRM self-tests")
+    ("DRM_AMD_DC_HDCP" :type bool :description "AMD Display Core HDCP support")
+
+    ;; DAMON (Data Access Monitor) options
+    ("DAMON_DBGFS" :type bool :deprecated "6.9" :description "DAMON debugfs interface (deprecated)")
+    ("DAMON_DBGFS_DEPRECATED" :type bool :deprecated "6.9" :description "DAMON debugfs deprecation notice")
+
+    ;; Miscellaneous subsystem options
+    ("ARCH_RANDOM" :type bool :description "Architecture random number generator")
+    ("ASYMMETRIC_TPM_KEY_SUBTYPE" :type tristate :description "TPM-based asymmetric keys")
+    ("BCACHEFS_FS" :type tristate :version "6.7" :description "Bcachefs filesystem")
+    ("BLK_DEV_THROTTLING_LOW" :type bool :deprecated "5.0" :description "Block throttling low limit (removed)")
+    ("BT_HCIBTUSB_AUTO_ISOC_ALT" :type bool :deprecated "6.1" :description "Bluetooth HCI USB auto isoc (removed)")
+    ("CAN_ESD_USB2" :type tristate :deprecated "5.17" :description "ESD USB/2 CAN adapter (removed)")
+    ("COMMAND_LINE_SIZE" :type int :description "Kernel command line buffer size")
+    ("CPU_LITTLE_ENDIAN" :type bool :description "Little-endian CPU")
+    ("CPU5_WDT" :type tristate :deprecated "5.5" :description "CPU5 watchdog (removed)")
+    ("DLM_DEPRECATED_API" :type bool :deprecated "6.2" :description "DLM deprecated API (removed)")
+    ("ECHO" :type tristate :deprecated "5.8" :description "Line echo canceller for mISDN (removed)")
+    ("EFI_FAKE_MEMMAP" :type bool :description "EFI fake memory map")
+    ("FB_DA8XX" :type tristate :deprecated "6.8" :description "DA8xx/OMAP-L1xx framebuffer (removed)")
+    ("FS_VERITY_DEBUG" :type bool :description "FS-verity debugging")
+    ("FS_PID" :type bool :version "6.8" :description "PID namespace filesystem")
+    ("FTRACE_MCOUNT_RECORD" :type bool :description "Record mcount call sites for dynamic ftrace")
+    ("GENERIC_CPU" :type bool :description "Generic CPU support")
+    ("KALLSYMS_BASE_RELATIVE" :type bool :description "Use relative offsets in kallsyms")
+    ("MEAN_AND_VARIANCE_UNIT_TEST" :type tristate :version "6.7" :description "Mean and variance unit test")
+    ("MDIO_DEVICE" :type tristate :deprecated "5.13" :description "MDIO device (now auto-selected)")
+    ("PRINTK_SAFE_LOG_BUF_SHIFT" :type int :deprecated "5.10" :description "Printk safe buffer size (removed)")
+    ("RUST_EXTRA_LOCKDEP" :type bool :version "6.10" :description "Extra lockdep checks for Rust code")
+    ("SCHED_TOPOLOGY_VERTICAL" :type bool :arch "s390" :description "Vertical CPU topology for scheduling")
+    ("SYSFS_DEPRECATED" :type bool :deprecated "5.12" :description "Create deprecated sysfs layout")
+    ("THERMAL_WRITABLE_TRIPS" :type bool :description "Allow writing to thermal trip points")
+    ("XEN_SAVE_RESTORE" :type bool :description "Xen save/restore support")
+
+    ;; Sound/Audio subsystem options
+    ("SND_VERBOSE_PRINTK" :type bool :deprecated "5.2" :description "Verbose printk for sound (removed)")
+    ("SND_SOC_SOF_IMX8_SUPPORT" :type bool :description "SOF support for i.MX8")
+    ("SND_SOC_SOF_IMX8M_SUPPORT" :type bool :description "SOF support for i.MX8M")
+    ("SND_SOC_INTEL_SST" :type tristate :deprecated "5.18" :description "Intel SST audio (removed)")
+    ("SND_SOC_INTEL_SOF_DA7219_MAX98373_MACH" :type tristate :description "SOF with DA7219 and MAX98373")
+    ("SND_SOC_INTEL_SKYLAKE" :type tristate :deprecated "6.8" :description "Intel Skylake audio (deprecated)")
+    ("SND_SOC_INTEL_SKYLAKE_HDAUDIO_CODEC" :type bool :deprecated "6.8" :description "Skylake HDAUDIO codec")
+    ("SND_SOC_INTEL_SKL_RT286_MACH" :type tristate :deprecated "6.8" :description "Skylake with RT286")
+    ("SND_SOC_INTEL_SKL_NAU88L25_SSM4567_MACH" :type tristate :deprecated "6.8" :description "Skylake with NAU88L25 and SSM4567")
+    ("SND_SOC_INTEL_SKL_NAU88L25_MAX98357A_MACH" :type tristate :deprecated "6.8" :description "Skylake with NAU88L25 and MAX98357A")
+    ("SND_SOC_INTEL_KBL_RT5663_RT5514_MAX98927_MACH" :type tristate :deprecated "6.8" :description "Kabylake with RT5663, RT5514, MAX98927")
+    ("SND_SOC_INTEL_KBL_RT5663_MAX98927_MACH" :type tristate :deprecated "6.8" :description "Kabylake with RT5663 and MAX98927")
+    ("SND_SOC_INTEL_KBL_RT5660_MACH" :type tristate :deprecated "6.8" :description "Kabylake with RT5660")
+    ("SND_SOC_INTEL_KBL_DA7219_MAX98927_MACH" :type tristate :deprecated "6.8" :description "Kabylake with DA7219 and MAX98927")
+    ("SND_SOC_INTEL_KBL_DA7219_MAX98357A_MACH" :type tristate :deprecated "6.8" :description "Kabylake with DA7219 and MAX98357A")
+    ("SND_SOC_INTEL_CML_LP" :type tristate :deprecated "6.8" :description "Cometlake LP audio")
+    ("SND_SOC_INTEL_CML_H" :type tristate :deprecated "6.8" :description "Cometlake H audio")
+    ("SND_SOC_INTEL_BXT_RT298_MACH" :type tristate :deprecated "6.8" :description "Broxton with RT298")
+    ("SND_SOC_INTEL_BXT_DA7219_MAX98357A_MACH" :type tristate :deprecated "6.8" :description "Broxton with DA7219 and MAX98357A")
+    ("SND_SOC_IMX_SPDIF" :type tristate :description "i.MX SPDIF machine driver")
+    ("SND_SOC_IMG" :type tristate :deprecated "5.14" :description "Imagination Technologies SoC audio (removed)")
+    ("SND_SOC_ADI" :type tristate :description "Analog Devices SoC audio")
+    ("SND_CTL_VALIDATION" :type bool :description "Sound control interface validation")
+    ("SND_ATMEL_SOC" :type tristate :deprecated "6.5" :description "Atmel SoC audio (removed)")
+
+    ;; Video/Media drivers
+    ("VIDEO_VS6624" :type tristate :deprecated "5.14" :description "VS6624 sensor (removed)")
+    ("VIDEO_V4L2" :type tristate :deprecated "5.7" :description "V4L2 core (now auto-selected)")
+    ("VIDEO_TM6000" :type tristate :deprecated "5.14" :description "TM6000 USB TV (removed)")
+    ("VIDEO_TM6000_ALSA" :type tristate :deprecated "5.14" :description "TM6000 ALSA audio (removed)")
+    ("VIDEO_ST_VGXY61" :type tristate :version "6.2" :description "ST VGXY61 image sensor")
+    ("VIDEO_STK1160_COMMON" :type tristate :deprecated "5.9" :description "STK1160 common (removed)")
+    ("VIDEO_SR030PC30" :type tristate :deprecated "5.9" :description "SR030PC30 sensor (removed)")
+    ("VIDEO_S5K6AA" :type tristate :deprecated "5.9" :description "S5K6AA sensor (removed)")
+    ("VIDEO_S5K4ECGX" :type tristate :deprecated "5.9" :description "S5K4ECGX sensor (removed)")
+    ("VIDEO_NOON010PC30" :type tristate :deprecated "5.9" :description "NOON010PC30 sensor (removed)")
+    ("VIDEO_MT9T001" :type tristate :deprecated "5.14" :description "MT9T001 sensor (removed)")
+    ("VIDEO_MT9M032" :type tristate :deprecated "5.14" :description "MT9M032 sensor (removed)")
+    ("VIDEO_M5MOLS" :type tristate :deprecated "5.9" :description "M5MOLS sensor (removed)")
+    ("VIDEO_CPIA2" :type tristate :deprecated "5.11" :description "CPiA2 video for Linux (removed)")
+    ("VIDEO_AD9389B" :type tristate :deprecated "5.14" :description "AD9389B encoder (removed)")
+    ("USB_STKWEBCAM" :type tristate :deprecated "5.14" :description "USB Syntek webcam (removed)")
+    ("USB_NET_RNDIS_WLAN" :type tristate :deprecated "5.12" :description "RNDIS WLAN driver (removed)")
+
+    ;; Sensor/Hardware monitoring drivers
+    ("SENSORS_SMM665" :type tristate :deprecated "6.4" :description "SMM665 hardware monitor (removed)")
+    ("SENSORS_SBRMI" :type tristate :version "6.0" :description "AMD SB-RMI sensor")
+    ("SENSORS_OXP" :type tristate :version "6.4" :description "OneXPlayer mini-PC sensors")
+    ("SENSORS_MAX6642" :type tristate :deprecated "5.13" :description "MAX6642 sensor (removed)")
+    ("SENSORS_ASUS_WMI_EC" :type tristate :version "5.17" :description "ASUS WMI EC sensors")
+    ("SENSORS_ADM1021" :type tristate :deprecated "6.2" :description "ADM1021 sensor (removed)")
+
+    ;; Serial/UART drivers
+    ("SERIAL_SC16IS7XX_CORE" :type tristate :description "SC16IS7xx serial core")
+    ("SERIAL_KGDB_NMI" :type bool :description "KGDB NMI serial console")
+
+    ;; I2C drivers
+    ("I2C_NFORCE2_S4985" :type tristate :deprecated "5.5" :description "nForce2-S4985 I2C (removed)")
+    ("I2C_MULTI_INSTANTIATE" :type tristate :description "I2C multi instantiate helper")
+    ("I2C_COMPAT" :type bool :deprecated "5.2" :description "I2C compatibility layer (removed)")
+    ("I2C_AMD756_S4882" :type tristate :deprecated "5.5" :description "AMD756-S4882 I2C (removed)")
+
+    ;; Touchscreen drivers
+    ("TOUCHSCREEN_MCS5000" :type tristate :deprecated "5.12" :description "MCS5000 touchscreen (removed)")
+    ("TOUCHSCREEN_CYTTSP4_CORE" :type tristate :deprecated "5.17" :description "Cypress CYTTSP4 core (removed)")
+
+    ;; Input/Keyboard/Mouse drivers
+    ("INPUT_EVBUG" :type tristate :description "Event debugging")
+    ("KEYBOARD_MCS" :type tristate :deprecated "5.12" :description "MCS keyboard (removed)")
+    ("KEYBOARD_ADP5589" :type tristate :deprecated "5.17" :description "ADP5589 I/O expander keyboard (removed)")
+    ("MOUSE_PS2_PIXART" :type bool :version "6.9" :description "Pixart PS/2 touchpad protocol")
+
+    ;; GPIO drivers
+    ("GPIO_ADP5588" :type tristate :deprecated "5.17" :description "ADP5588 I/O expander (removed)")
+
+    ;; MFD (Multi-Function Device) drivers
+    ("MFD_RK808" :type tristate :description "Rockchip RK808/RK818 PMIC")
+    ("MFD_PCF50633" :type tristate :deprecated "6.3" :description "NXP PCF50633 (removed)")
+    ("MFD_MAX597X" :type tristate :version "6.7" :description "Maxim MAX597x PMIC")
+    ("MFD_INTEL_M10_BMC" :type tristate :description "Intel MAX10 BMC")
+
+    ;; MTD (Memory Technology Device) options
+    ("MTD_INTEL_VR_NOR" :type tristate :version "5.11" :description "Intel Vendor Defined NOR flash")
+    ("MTD_AR7_PARTS" :type tristate :deprecated "5.13" :description "TI AR7 partitioning (removed)")
+
+    ;; Network drivers and protocols
+    ("WLAN_VENDOR_CISCO" :type bool :description "Cisco wireless devices")
+    ("RTL8192U" :type tristate :deprecated "5.17" :description "Realtek RTL8192U (removed)")
+    ("IWLWIFI_BCAST_FILTERING" :type bool :description "Intel wireless broadcast filtering")
+    ("INFINIBAND_QIB" :type tristate :deprecated "6.8" :description "QLogic InfiniBand (removed)")
+    ("INFINIBAND_HNS" :type tristate :description "HiSilicon Hip06 SoC InfiniBand")
+
+    ;; RTC drivers
+    ("RTC_DRV_V3020" :type tristate :deprecated "6.4" :description "V3020 RTC (removed)")
+
+    ;; PHY drivers
+    ("PHY_QCOM_SNPS_EUSB2" :type tristate :version "6.8" :description "Qualcomm SNPS eUSB2 PHY")
+
+    ;; Power management drivers
+    ("PDA_POWER" :type tristate :deprecated "5.12" :description "PDA power driver (removed)")
+
+    ;; PCI drivers
+    ("PCI_PWRCTL_SLOT" :type tristate :version "6.10" :description "PCI power control for slot")
+
+    ;; IIO (Industrial I/O) drivers
+    ("ROHM_BU27008" :type tristate :version "6.5" :description "ROHM BU27008 color sensor")
+
+    ;; Platform drivers
+    ("YOGABOOK_WMI" :type tristate :version "6.4" :description "Lenovo Yoga Book WMI driver")
+    ("PEAQ_WMI" :type tristate :deprecated "6.3" :description "PEAQ WMI hotkeys (removed)")
+    ("TINYDRM_ST7735R" :type tristate :deprecated "5.11" :description "ST7735R TFT driver (removed)")
+    ("TINYDRM_ST7586" :type tristate :deprecated "5.11" :description "ST7586 TFT driver (removed)")
+    ("TI_ST" :type tristate :deprecated "5.17" :description "Texas Instruments shared transport (removed)")
+    ("PI433" :type tristate :deprecated "5.12" :description "Pi433 radio module (removed)")
+    ("NOUVEAU_LEGACY_CTX_SUPPORT" :type bool :deprecated "6.3" :description "Nouveau legacy context support (removed)")
+
+    ;; UIO drivers
+    ("UIO_PRUSS" :type tristate :deprecated "5.13" :description "PRUSS UIO driver (removed)")
+
+    ;; Staging/legacy hardware drivers
+    ("ADIS16240" :type tristate :deprecated "5.12" :description "ADIS16240 accelerometer (removed)")
+    ("ADE7854" :type tristate :deprecated "5.12" :description "ADE7854 energy meter (removed)")
+    ("HTC_PASIC3" :type tristate :deprecated "5.12" :description "HTC PASIC3 LED/DS1WM chip (removed)")
+    ("HTC_I2CPLD" :type tristate :deprecated "5.12" :description "HTC I2C PLD chip (removed)")
+    ("MPSC" :type bool :deprecated "5.2" :description "Marvell MPSC serial (removed)")
+    ("GS_FPGABOOT" :type tristate :deprecated "5.12" :description "Xilinx FPGA firmware download (removed)")
+
+    ;; Miscellaneous hardware options
+    ("ACPI_CUSTOM_METHOD" :type bool :description "ACPI custom method support")
+    ("TPM_KEY_PARSER" :type bool :deprecated "6.10" :description "TPM key parser (removed)")
+    ("MODULE_SIG_SHA224" :type bool :description "Sign kernel modules with SHA-224")
+    ("MICROCODE_INTEL" :type tristate :deprecated "6.4" :description "Intel microcode (now built-in)")
+    ("MICROCODE_AMD" :type tristate :deprecated "6.4" :description "AMD microcode (now built-in)")
+    ("MITIGATION_GDS_FORCE" :type bool :description "Force GDS mitigation")
+    ("LEDS_TRIGGER_AUDIO" :type tristate :description "LED trigger for audio mute/micmute")
+    ("KVM_MMU_AUDIT" :type bool :description "KVM MMU auditing")
+    ("IMA_TEMPLATE" :type string :deprecated "5.1" :description "IMA default template (removed)")
+    ("HW_CONSOLE" :type bool :description "Hardware console support")
+    ("HABANA_AI" :type tristate :version "5.6" :description "Habana AI accelerators")
+    ("GUEST_STATE_BUFFER_TEST" :type tristate :version "6.10" :description "Guest state buffer test module")
+    ("QCOM_QFPROM" :type tristate :description "Qualcomm QFPROM support")
+    ("PAGE_BLOCK_ORDER" :type int :deprecated "6.17" :description "Page block order (renamed to PAGE_BLOCK_MAX_ORDER)")
+    ("INTERRUPT_SANITIZE_REGISTERS" :type bool :version "6.9" :description "Sanitize registers on interrupt entry")
+    ("SUNRPC_DISABLE_INSECURE_ENCTYPES" :type bool :description "Disable insecure RPC encryption types")
+    ("RPCSEC_GSS_KRB5_ENCTYPES_DES" :type bool :deprecated "5.10" :description "RPC GSS Kerberos DES (removed)")
+    ("XZ_DEC_IA64" :type bool :arch "ia64" :deprecated "5.8" :description "XZ decompressor for IA64 (removed)")
+    ("XMON_DEFAULT_RO_MODE" :type bool :arch "powerpc" :description "XMON default read-only mode")
+    ("ZSWAP_ZPOOL_DEFAULT_Z3FOLD" :type bool :description "Use z3fold as default zswap pool")
+    ("ZSWAP_ZPOOL_DEFAULT_Z3FOLD_DEPRECATED" :type bool :deprecated "6.2" :description "Z3fold default deprecated")
+    ("ZSWAP_EXCLUSIVE_LOADS_DEFAULT_ON" :type bool :version "6.5" :description "Exclusive loads on by default")
+    ("ZBUD" :type tristate :deprecated "6.7" :description "Zbud allocator (removed)")
+    ("Z3FOLD" :type tristate :deprecated "6.7" :description "Z3fold allocator (removed)")
+    ("Z3FOLD_DEPRECATED" :type bool :deprecated "6.7" :description "Z3fold deprecated notice"))
   "List of vendor-specific and version-specific Kconfig options.
 Each entry is (OPTION-NAME :key value ...) with possible keys:
 :type - Option type (bool, tristate, string, int, hex)
