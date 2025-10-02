@@ -43,8 +43,8 @@
           (message "Testing all critical completeness features...")
           
           ;; Test mainmenu parsing
-          (setq linconf-main-menu-title nil) ; Reset
-          (let ((options (linconf-parse-kconfig-file temp-file)))
+          (setq kconfig-main-menu-title nil) ; Reset
+          (let ((options (kconfig-parse-kconfig-file temp-file)))
             (message "\n1. MAINMENU TEST:")
             (message "   Main menu title: '%s'" (linconf-get-main-menu-title))
             
@@ -90,13 +90,13 @@
               (message "   ✓ Multi-line continuations working: %s" 
                        (if multiline-found "YES" "NO"))
               (message "   ✓ Mainmenu parsing: %s" 
-                       (if linconf-main-menu-title "YES" "NO")))
+                       (if kconfig-main-menu-title "YES" "NO")))
             
             ;; Test condition evaluation
             (message "\n4. CONDITION EVALUATION TEST:")
-            (linconf-set-config-value "X86" t)
-            (linconf-set-config-value "ARM" nil)
-            (linconf-set-config-value "EXPERT" nil)
+            (kconfig-set-config-value "X86" t)
+            (kconfig-set-config-value "ARM" nil)
+            (kconfig-set-config-value "EXPERT" nil)
             
             (let ((test-conditions '(("X86" . t)
                                    ("!X86" . nil)  
@@ -107,7 +107,7 @@
               (dolist (test test-conditions)
                 (let ((condition (car test))
                       (expected (cdr test))
-                      (result (linconf-evaluate-condition (car test))))
+                      (result (kconfig-evaluate-condition (car test))))
                   (message "   Condition '%s' -> %s (expected: %s) %s"
                            condition result expected
                            (if (eq result expected) "✓" "✗")))))

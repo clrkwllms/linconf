@@ -1,14 +1,14 @@
 #!/usr/bin/env emacs --script
 ;; Test if the IP_VS conditional parsing fix works
 
-(load-file "linconf.el")
+(progn (load-file "kconfig.el") (load-file "linconf.el"))
 
 (message "=== IP_VS Conditional Parsing Test ===")
 
 ;; Test direct parsing of IP_VS Kconfig file
 (let ((ipvs-file "/nas/src/RedHat/gitlab/kernel-ark/linus/net/netfilter/ipvs/Kconfig"))
   (message "Parsing file: %s" ipvs-file)
-  (let ((options (linconf-parse-kconfig-file ipvs-file)))
+  (let ((options (kconfig-parse-kconfig-file ipvs-file)))
     (message "Total options parsed: %d" (length options))
 
     ;; Check specifically for missing IP_VS options from the report

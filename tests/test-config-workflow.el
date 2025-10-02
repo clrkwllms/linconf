@@ -41,13 +41,13 @@
           ;; Set the kernel source path for testing
           (setq linconf-kernel-source-path test-dir)
           ;; Manually parse the test kconfig file
-          (clrhash linconf-kconfig-options)
-          (clrhash linconf-config-values)
+          (clrhash kconfig-options)
+          (clrhash kconfig-config-values)
           (clrhash linconf-select-chains)
-          (let ((options (linconf-parse-kconfig-file test-kconfig)))
+          (let ((options (kconfig-parse-kconfig-file test-kconfig)))
             (dolist (option options)
-              (puthash (car option) (cdr option) linconf-kconfig-options)))
-          (setq linconf-kconfig-loaded t)
+              (puthash (car option) (cdr option) kconfig-options)))
+          (setq kconfig-loaded t)
           ;; Load the .config file
           (linconf-load-config-file test-config)
           
@@ -55,7 +55,7 @@
           (message "   Loaded config values:")
           (let ((test-values '("TEST_OPTION_A" "TEST_OPTION_B" "TEST_OPTION_C" "TEST_OPTION_D")))
             (dolist (option test-values)
-              (let ((value (linconf-get-config-value option)))
+              (let ((value (kconfig-get-config-value option)))
                 (message "     %s = %s" option
                          (cond ((eq value t) "y")
                                ((eq value 'm) "m") 
@@ -74,7 +74,7 @@
           (message "   Modified config values:")
           (let ((test-values '("TEST_OPTION_A" "TEST_OPTION_B" "TEST_OPTION_C" "TEST_OPTION_D")))
             (dolist (option test-values)
-              (let ((value (linconf-get-config-value option)))
+              (let ((value (kconfig-get-config-value option)))
                 (message "     %s = %s" option
                          (cond ((eq value t) "y")
                                ((eq value 'm) "m")
@@ -101,14 +101,14 @@
           
           ;; Test 5: Re-load and verify
           (message "\n5. RE-LOAD TEST:")
-          (clrhash linconf-config-values)
+          (clrhash kconfig-config-values)
           (message "   Cleared internal state, reloading...")
           (linconf-load-config-file test-config)
           
           (message "   Re-loaded config values:")
           (let ((test-values '("TEST_OPTION_A" "TEST_OPTION_B" "TEST_OPTION_C" "TEST_OPTION_D")))
             (dolist (option test-values)
-              (let ((value (linconf-get-config-value option)))
+              (let ((value (kconfig-get-config-value option)))
                 (message "     %s = %s" option
                          (cond ((eq value t) "y")
                                ((eq value 'm) "m")
@@ -121,8 +121,8 @@
             (message "   Saved config snapshot with %d entries" (hash-table-count snapshot))
             
             ;; Make some changes
-            (linconf-set-config-value "TEST_OPTION_A" nil)
-            (linconf-set-config-value "TEST_OPTION_B" nil)
+            (kconfig-set-config-value "TEST_OPTION_A" nil)
+            (kconfig-set-config-value "TEST_OPTION_B" nil)
             (message "   Made temporary changes...")
             
             ;; Restore 
@@ -130,8 +130,8 @@
             (message "   Restored from snapshot")
             
             ;; Verify restoration
-            (let ((restored-a (linconf-get-config-value "TEST_OPTION_A"))
-                  (restored-b (linconf-get-config-value "TEST_OPTION_B")))
+            (let ((restored-a (kconfig-get-config-value "TEST_OPTION_A"))
+                  (restored-b (kconfig-get-config-value "TEST_OPTION_B")))
               (message "     TEST_OPTION_A restored to: %s" 
                        (if (eq restored-a t) "y" "not set"))
               (message "     TEST_OPTION_B restored to: %s"

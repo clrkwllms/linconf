@@ -79,6 +79,11 @@ check_prerequisites() {
     log_info "Checking prerequisites..."
 
     # Check if we're in the right directory
+    if [[ ! -f "kconfig.el" ]]; then
+        log_error "kconfig.el not found. Please run this script from the LinConf project directory."
+        exit 1
+    fi
+
     if [[ ! -f "linconf.el" ]]; then
         log_error "linconf.el not found. Please run this script from the LinConf project directory."
         exit 1
@@ -151,7 +156,7 @@ run_test() {
     fi
 
     # Run the test
-    local cmd="$EMACS_BATCH -l linconf.el -l $TEST_SCRIPT"
+    local cmd="$EMACS_BATCH -l kconfig.el -l linconf.el -l $TEST_SCRIPT"
     if [[ "$VERBOSE" == "true" ]]; then
         log_info "Running: $cmd"
         eval $cmd

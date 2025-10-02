@@ -58,16 +58,16 @@
               
               ;; Parse all files and count options
               (message "\nTesting option parsing...")
-              (clrhash linconf-kconfig-options)
+              (clrhash kconfig-options)
               (let ((total-options 0))
                 (dolist (file all-files)
-                  (let ((options (linconf-parse-kconfig-file file)))
+                  (let ((options (kconfig-parse-kconfig-file file)))
                     (message "Found %d options in %s" (length options) (file-name-nondirectory file))
                     (dolist (option options)
-                      (puthash (car option) (cdr option) linconf-kconfig-options)
+                      (puthash (car option) (cdr option) kconfig-options)
                       (setq total-options (1+ total-options)))))
                 (message "\nTotal options found: %d" total-options)
-                (message "Options in hash table: %d" (hash-table-count linconf-kconfig-options))))))
+                (message "Options in hash table: %d" (hash-table-count kconfig-options))))))
       ;; Cleanup
       (delete-directory temp-dir t))))
 

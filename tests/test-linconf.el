@@ -11,18 +11,18 @@
 (require 'ert)
 (require 'linconf)
 
-(ert-deftest test-linconf-parse-kconfig-option-bool ()
+(ert-deftest test-kconfig-parse-kconfig-option-bool ()
   "Test parsing a simple bool option."
   (let ((lines '("config DEBUG_KERNEL"
                  "	bool \"Kernel debugging\""
                  "	help"
                  "	  Enable kernel debugging features.")))
-    (let ((result (linconf-parse-kconfig-option lines)))
+    (let ((result (kconfig-parse-kconfig-option lines)))
       (should (equal (car result) "DEBUG_KERNEL"))
       (should (eq (plist-get (cdr result) :type) 'bool))
       (should (string-match "Enable kernel debugging" (plist-get (cdr result) :help))))))
 
-(ert-deftest test-linconf-parse-kconfig-option-tristate ()
+(ert-deftest test-kconfig-parse-kconfig-option-tristate ()
   "Test parsing a tristate option with dependencies."
   (let ((lines '("config EXT4_FS"
                  "	tristate \"The Extended 4 (ext4) filesystem\""
@@ -32,7 +32,7 @@
                  "	default y"
                  "	help"
                  "	  This is the next generation of the ext3 filesystem.")))
-    (let ((result (linconf-parse-kconfig-option lines)))
+    (let ((result (kconfig-parse-kconfig-option lines)))
       (should (equal (car result) "EXT4_FS"))
       (should (eq (plist-get (cdr result) :type) 'tristate))
       (should (equal (plist-get (cdr result) :depends) "BLOCK"))
@@ -40,17 +40,17 @@
       (should (member "CRC16" (plist-get (cdr result) :select)))
       (should (equal (plist-get (cdr result) :default) "y")))))
 
-(ert-deftest test-linconf-parse-kconfig-option-string ()
+(ert-deftest test-kconfig-parse-kconfig-option-string ()
   "Test parsing a string option."
   (let ((lines '("config LOCALVERSION"
                  "	string \"Local version - append to kernel release\""
                  "	help"
                  "	  Append an extra string to the end of your kernel version.")))
-    (let ((result (linconf-parse-kconfig-option lines)))
+    (let ((result (kconfig-parse-kconfig-option lines)))
       (should (equal (car result) "LOCALVERSION"))
       (should (eq (plist-get (cdr result) :type) 'string)))))
 
-(ert-deftest test-linconf-parse-kconfig-option-int-with-range ()
+(ert-deftest test-kconfig-parse-kconfig-option-int-with-range ()
   "Test parsing an int option with range."
   (let ((lines '("config LOG_BUF_SHIFT"
                  "	int \"Kernel log buffer size (16 => 64KB, 17 => 128KB)\""
@@ -58,29 +58,29 @@
                  "	default 17"
                  "	help"
                  "	  Select the minimal kernel log buffer size.")))
-    (let ((result (linconf-parse-kconfig-option lines)))
+    (let ((result (kconfig-parse-kconfig-option lines)))
       (should (equal (car result) "LOG_BUF_SHIFT"))
       (should (eq (plist-get (cdr result) :type) 'int))
       (should (equal (plist-get (cdr result) :range) '(12 . 25)))
       (should (equal (plist-get (cdr result) :default) "17")))))
 
-(ert-deftest test-linconf-parse-kconfig-option-hex ()
+(ert-deftest test-kconfig-parse-kconfig-option-hex ()
   "Test parsing a hex option."
   (let ((lines '("config PHYSICAL_START"
                  "	hex \"Physical address where the kernel is loaded\""
                  "	default \"0x1000000\""
                  "	help"
                  "	  This gives the physical address where the kernel is loaded.")))
-    (let ((result (linconf-parse-kconfig-option lines)))
+    (let ((result (kconfig-parse-kconfig-option lines)))
       (should (equal (car result) "PHYSICAL_START"))
       (should (eq (plist-get (cdr result) :type) 'hex))
       (should (equal (plist-get (cdr result) :default) "\"0x1000000\"")))))
 
-(ert-deftest test-linconf-parse-kconfig-option-no-config ()
+(ert-deftest test-kconfig-parse-kconfig-option-no-config ()
   "Test that parsing non-config lines returns nil."
   (let ((lines '("# This is just a comment"
                  "source \"drivers/Kconfig\"")))
-    (should (null (linconf-parse-kconfig-option lines)))))
+    (should (null (kconfig-parse-kconfig-option lines)))))
 
 (ert-deftest test-linconf-collect-kconfig-files ()
   "Test collecting Kconfig files by following source directives."
@@ -113,7 +113,7 @@
       ;; Cleanup
       (delete-directory temp-dir t))))
 
-(ert-deftest test-linconf-parse-kconfig-file ()
+(ert-deftest test-kconfig-parse-kconfig-file ()
   "Test parsing a complete Kconfig file."
   (let ((temp-file (make-temp-file "kconfig-test")))
     (unwind-protect
@@ -133,7 +133,7 @@
                     "	help\n"
                     "	  This is an example tristate option.\n"))
           
-          (let ((options (linconf-parse-kconfig-file temp-file)))
+          (let ((options (kconfig-parse-kconfig-file temp-file)))
             (should (= (length options) 2))
             
             ;; Check first option

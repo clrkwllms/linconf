@@ -1,5 +1,7 @@
 ;;; test-all-configs.el --- Test all config files in test-files directory -*- lexical-binding: t; -*-
 
+(add-to-list 'load-path "..")
+(require 'kconfig)
 (require 'linconf)
 
 (defun test-all-config-files ()

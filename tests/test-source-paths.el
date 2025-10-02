@@ -26,13 +26,13 @@
 
 (ert-deftest test-source-path-storage ()
   "Test that source paths are stored in option metadata."
-  (let ((linconf-kconfig-options (make-hash-table :test 'equal)))
+  (let ((kconfig-options (make-hash-table :test 'equal)))
     ;; Simulate parsing an option with source file
     (let ((option-plist '(:type bool :help "Test option" :source-file "arch/x86/Kconfig")))
-      (puthash "TEST_OPTION" option-plist linconf-kconfig-options)
+      (puthash "TEST_OPTION" option-plist kconfig-options)
 
       ;; Verify source file is stored
-      (let ((stored-plist (gethash "TEST_OPTION" linconf-kconfig-options)))
+      (let ((stored-plist (gethash "TEST_OPTION" kconfig-options)))
         (should stored-plist)
         (should (string= "arch/x86/Kconfig" (plist-get stored-plist :source-file)))))))
 

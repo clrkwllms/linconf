@@ -1,14 +1,14 @@
 #!/usr/bin/env emacs --script
 ;; Test full validation system with conditional parsing fix
 
-(load-file "linconf.el")
+(progn (load-file "kconfig.el") (load-file "linconf.el"))
 
 (setq linconf-kernel-source-path "/nas/src/RedHat/gitlab/kernel-ark/linus")
 
 (message "=== Full Validation Test with Conditional Parsing Fix ===")
 
 ;; Load all Kconfig options
-(linconf-load-kconfig-data)
+(kconfig-load-kconfig-data)
 
 ;; Check specifically for IP_VS options in the full system
 (let ((ipvs-options '("IP_VS_IPV6" "IP_VS_DEBUG" "IP_VS_TAB_BITS"
@@ -22,14 +22,14 @@
   (message "\n=== IP_VS Options Status in Full Kconfig System ===")
   (let ((found-count 0))
     (dolist (opt ipvs-options)
-      (if (gethash opt linconf-kconfig-options)
+      (if (gethash opt kconfig-options)
           (progn
             (setq found-count (1+ found-count))
-            (message "✓ %s: %s" opt (plist-get (gethash opt linconf-kconfig-options) :type)))
+            (message "✓ %s: %s" opt (plist-get (gethash opt kconfig-options) :type)))
         (message "✗ %s: NOT FOUND" opt)))
     (message "\nIP_VS Summary: %d/%d options found in full system" found-count (length ipvs-options)))
 
   ;; Also check total option count
-  (message "\nTotal Kconfig options loaded: %d" (hash-table-count linconf-kconfig-options)))
+  (message "\nTotal Kconfig options loaded: %d" (hash-table-count kconfig-options)))
 
 (message "\n=== DONE ===")

@@ -95,15 +95,15 @@
           
           ;; Test parsing all files
           (message "\nTesting parsing of all files...")
-          (clrhash linconf-kconfig-options)
+          (clrhash kconfig-options)
           (let ((total-options 0))
             (dolist (file (linconf-collect-kconfig-files temp-dir))
-              (let ((options (linconf-parse-kconfig-file file)))
+              (let ((options (kconfig-parse-kconfig-file file)))
                 (message "Found %d options in %s" 
                          (length options) 
                          (file-relative-name file temp-dir))
                 (dolist (option options)
-                  (puthash (car option) (cdr option) linconf-kconfig-options)
+                  (puthash (car option) (cdr option) kconfig-options)
                   (setq total-options (1+ total-options)))))
             (message "\nTotal configuration options found: %d" total-options)))
       

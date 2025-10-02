@@ -73,17 +73,17 @@
           (message "Testing select chain resolution with complex scenarios...")
           
           ;; Parse the test file and build select chains
-          (let ((options (linconf-parse-kconfig-file temp-file)))
+          (let ((options (kconfig-parse-kconfig-file temp-file)))
             (message "\n1. PARSING RESULTS:")
             (message "   Found %d total options" (length options))
             
             ;; Clear and rebuild select chains
             (clrhash linconf-select-chains)
-            (clrhash linconf-config-values)
+            (clrhash kconfig-config-values)
             
             ;; Process options and build select chains
             (dolist (option options)
-              (puthash (car option) (cdr option) linconf-kconfig-options)
+              (puthash (car option) (cdr option) kconfig-options)
               
               (let ((option-name (car option))
                     (select-statements (plist-get (cdr option) :select)))
@@ -93,8 +93,8 @@
                     (linconf-add-select-statement option-name select-stmt)))))
             
             ;; Set up some basic config values
-            (linconf-set-config-value "64BIT" t)
-            (linconf-set-config-value "PCI" t)
+            (kconfig-set-config-value "64BIT" t)
+            (kconfig-set-config-value "PCI" t)
             
             (message "\n2. SELECT CHAIN ANALYSIS:")
             (message "   Total select relationships built: %d" (hash-table-count linconf-select-chains))
@@ -125,16 +125,16 @@
             
             ;; Test 3: Conditional select
             (message "\n   Test 3: Enable X86_64 (with PCI=y)")
-            (linconf-set-config-value "PCI" t) ; Ensure PCI is enabled
+            (kconfig-set-config-value "PCI" t) ; Ensure PCI is enabled
             (let ((changes (linconf-simulate-config-change "X86_64" t)))
               (message "     Expected 3 auto-selects (including conditional), got: %d" (length changes)))
             
             ;; Test 4: Deep chain (GENERIC_CPU_DEVICES -> CPU_DEV_TREE)
             (message "\n   Test 4: Deep chain test via ARCH_X86")
-            (clrhash linconf-config-values) ; Reset values
-            (linconf-set-config-value "ARCH_X86" t)
+            (clrhash kconfig-config-values) ; Reset values
+            (kconfig-set-config-value "ARCH_X86" t)
             (linconf-apply-select-chains "ARCH_X86" t)
-            (let ((cpu-dev-tree-value (linconf-get-config-value "CPU_DEV_TREE")))
+            (let ((cpu-dev-tree-value (kconfig-get-config-value "CPU_DEV_TREE")))
               (message "     CPU_DEV_TREE should be auto-enabled: %s" 
                        (if (eq cpu-dev-tree-value t) "YES" "NO")))
             
@@ -158,7 +158,7 @@
             (message "   Testing complete workflow...")
             
             ;; Reset everything
-            (clrhash linconf-config-values)
+            (clrhash kconfig-config-values)
             
             ;; Enable a high-level option and trace all changes
             (message "   Enabling SMP...")
@@ -168,7 +168,7 @@
             (maphash (lambda (key value)
                        (when (eq value t)
                          (message "     %s = y" key)))
-                     linconf-config-values)
+                     kconfig-config-values)
             
             (message "\n✓ Select chain resolution tests completed!")))
       

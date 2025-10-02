@@ -58,7 +58,7 @@
                     "\tdefault \"test\"\n"))
           
           (message "Testing enhanced Kconfig parsing...")
-          (let ((options (linconf-parse-kconfig-file temp-file)))
+          (let ((options (kconfig-parse-kconfig-file temp-file)))
             (message "Found %d total options:" (length options))
             
             (dolist (option options)
