@@ -21,7 +21,8 @@
 
     ;; Set kernel source path for proper validation
     (setq linconf-kernel-source-path (expand-file-name "~/src/linux.git"))
-    (message "Using kernel source: %s" linconf-kernel-source-path)
+    (linconf-sync-kernel-source-path)
+    (message "Using kernel source: %s" kconfig-kernel-source-path)
 
     (unless config-files
       (error "No .config files found in test-files/"))
