@@ -5,10 +5,17 @@
 (defun test-all-config-files ()
   "Test all config files in test-files directory."
   (interactive)
-  (let ((config-files (directory-files "test-files" t "\\.config$"))
-        (results-file "test-results/all-config-validation-results.txt")
-        (all-results '())
-        (start-time (current-time)))
+  (let* ((arch-filter (getenv "LINCONF_ARCH_FILTER"))
+         (all-files (directory-files "test-files" t "\\.config$"))
+         (config-files (if arch-filter
+                          (seq-filter (lambda (f)
+                                       (string-match-p (concat "kernel-" arch-filter "-")
+                                                      (file-name-nondirectory f)))
+                                     all-files)
+                        all-files))
+         (results-file "test-results/all-config-validation-results.txt")
+         (all-results '())
+         (start-time (current-time)))
 
     ;; Set kernel source path for proper validation
     (setq linconf-kernel-source-path (expand-file-name "~/src/linux.git"))

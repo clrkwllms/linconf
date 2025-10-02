@@ -38,12 +38,16 @@ OPTIONS:
     -v, --verbose       Show detailed test output
     -c, --clean         Clean previous test results before running
     -s, --summary       Only show summary results (skip individual file details)
+    -a, --arch ARCH     Test only configs for specific architecture (aarch64|x86_64|ppc64le|riscv64|s390x)
+    -A, --all-archs     Show per-architecture summary statistics
 
 EXAMPLES:
     $0                  # Run with default settings
     $0 -k /usr/src/linux-headers-\$(uname -r)  # Use system kernel headers
     $0 -c -s            # Clean previous results and show summary only
     $0 -v               # Verbose output with all validation details
+    $0 -a aarch64       # Test only ARM64 configs
+    $0 -A               # Show per-architecture statistics
 
 RESULTS:
     Results are saved to $RESULTS_DIR/
@@ -140,6 +144,12 @@ run_test() {
     # Create results directory
     mkdir -p "$RESULTS_DIR"
 
+    # Set architecture filter if specified
+    if [[ -n "$ARCH_FILTER" ]]; then
+        export LINCONF_ARCH_FILTER="$ARCH_FILTER"
+        log_info "Filtering for architecture: $ARCH_FILTER"
+    fi
+
     # Run the test
     local cmd="$EMACS_BATCH -l linconf.el -l $TEST_SCRIPT"
     if [[ "$VERBOSE" == "true" ]]; then
@@ -161,6 +171,53 @@ run_test() {
         log_error "Test failed with exit code $exit_code"
         exit $exit_code
     fi
+}
+
+# Show per-architecture summary
+show_arch_summary() {
+    log_info "=== PER-ARCHITECTURE SUMMARY ==="
+    echo
+
+    for arch in aarch64 x86_64 ppc64le riscv64 s390x; do
+        local arch_files=$(find test-files -name "kernel-${arch}-*.config" 2>/dev/null | wc -l)
+        if [[ $arch_files -gt 0 ]]; then
+            echo -e "${BLUE}Architecture: ${arch^^}${NC} ($arch_files configs)"
+
+            # Count results for this architecture from result files
+            local total_valid=0
+            local total_errors=0
+            local total_warnings=0
+            local perfect_count=0
+
+            for config in test-files/kernel-${arch}-*.config; do
+                if [[ -f "$config" ]]; then
+                    local basename=$(basename "$config" .config)
+                    local result_file="$RESULTS_DIR/${basename}-results.txt"
+
+                    if [[ -f "$result_file" ]]; then
+                        # Extract counts from result file
+                        local valid=$(grep "Valid options:" "$result_file" | head -1 | awk '{print $3}')
+                        local errs=$(grep "Errors:" "$result_file" | head -1 | awk '{print $2}')
+                        local warns=$(grep "Warnings:" "$result_file" | head -1 | awk '{print $2}')
+
+                        total_valid=$((total_valid + ${valid:-0}))
+                        total_errors=$((total_errors + ${errs:-0}))
+                        total_warnings=$((total_warnings + ${warns:-0}))
+
+                        if [[ ${errs:-1} -eq 0 ]] && [[ ${warns:-1} -eq 0 ]]; then
+                            perfect_count=$((perfect_count + 1))
+                        fi
+                    fi
+                fi
+            done
+
+            echo "  Valid options: $total_valid"
+            echo "  Errors: $total_errors"
+            echo "  Warnings: $total_warnings"
+            echo "  Perfect configs: $perfect_count/$arch_files"
+            echo
+        fi
+    done
 }
 
 # Show results summary
@@ -210,6 +267,8 @@ QUIET=false
 VERBOSE=false
 CLEAN=false
 SUMMARY_ONLY=false
+ARCH_FILTER=""
+SHOW_ARCH_SUMMARY=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -237,6 +296,14 @@ while [[ $# -gt 0 ]]; do
             SUMMARY_ONLY=true
             shift
             ;;
+        -a|--arch)
+            ARCH_FILTER="$2"
+            shift 2
+            ;;
+        -A|--all-archs)
+            SHOW_ARCH_SUMMARY=true
+            shift
+            ;;
         *)
             log_error "Unknown option: $1"
             usage
@@ -257,10 +324,22 @@ main() {
         clean_results
     fi
 
-    run_test
-    show_summary
+    # If showing arch summary and results exist, skip test
+    if [[ "$SHOW_ARCH_SUMMARY" == "true" ]] && [[ -f "$MAIN_RESULTS_FILE" ]] && [[ "$CLEAN" != "true" ]]; then
+        log_info "Using existing test results"
+        show_arch_summary
+        log_success "Architecture summary displayed successfully!"
+    else
+        run_test
 
-    log_success "Test suite completed successfully!"
+        if [[ "$SHOW_ARCH_SUMMARY" == "true" ]]; then
+            show_arch_summary
+        else
+            show_summary
+        fi
+
+        log_success "Test suite completed successfully!"
+    fi
 }
 
 # Run main function
