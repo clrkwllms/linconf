@@ -822,7 +822,9 @@ eliminating the need for a separate kconfig-select-chains hash table."
   "Apply vendor-specific type corrections for known kernel patches.
 This handles cases where distributions (like RHEL) patch the mainline kernel
 to change option types (e.g., bool to tristate)."
-  (let ((corrections '(("TEST_MISC_MINOR" tristate "RHEL patches TEST_MISC_MINOR to tristate")))
+  (let ((corrections '(("TEST_MISC_MINOR" tristate "RHEL patches TEST_MISC_MINOR to tristate")
+                       ("ACPI_CUSTOM_METHOD" tristate "RedHat/Fedora debug kernels patch ACPI_CUSTOM_METHOD to tristate")
+                       ("EFI_VARS" tristate "RedHat automotive kernels patch EFI_VARS to tristate")))
         (applied-count 0))
     (dolist (correction corrections)
       (let* ((option (nth 0 correction))
@@ -964,7 +966,7 @@ Returns (valid . error-message) where valid is t/nil and error-message explains 
   "Validate VALUE for int option with optional RANGE. Returns (valid . error-message)."
   (cond
    ((null value) (cons t nil))
-   ((not (string-match "^[0-9]+$" value))
+   ((not (string-match "^-?[0-9]+$" value))
     (cons nil "Integer values must be numeric"))
    (range
     (let ((num-value (string-to-number value))
@@ -1186,7 +1188,7 @@ Returns version string or nil if not found."
     ("DECNET" :type tristate :deprecated "6.1" :description "DECnet protocol support (removed in 6.1)")
     ("REISERFS_FS" :type tristate :deprecated "5.18" :description "Reiserfs filesystem (deprecated in 5.18)")
     ("SYSV_FS" :type tristate :deprecated "6.6" :description "System V filesystem support (deprecated)")
-    ("EFI_VARS" :type bool :deprecated "5.5" :description "EFI variable support via sysfs (deprecated, use efivarfs)")
+    ("EFI_VARS" :type tristate :deprecated "5.5" :description "EFI variable support via sysfs (RedHat automotive: tristate, deprecated)")
     ("GEN_RTC" :type bool :deprecated "5.5" :description "Generic /dev/rtc emulation (removed)")
     ("PRISM2_USB" :type tristate :deprecated "5.13" :description "Prism2 USB wireless driver (removed)")
     ("QLGE" :type tristate :deprecated "5.18" :description "QLogic QLGE 10Gb Ethernet driver (removed in 5.18)")
@@ -1545,7 +1547,7 @@ Returns version string or nil if not found."
     ("GS_FPGABOOT" :type tristate :deprecated "5.12" :description "Xilinx FPGA firmware download (removed)")
 
     ;; Miscellaneous hardware options
-    ("ACPI_CUSTOM_METHOD" :type bool :description "ACPI custom method support")
+    ("ACPI_CUSTOM_METHOD" :type tristate :description "ACPI custom method support (RedHat/Fedora: tristate)")
     ("TPM_KEY_PARSER" :type tristate :deprecated "6.10" :description "TPM key parser (removed)")
     ("MODULE_SIG_SHA224" :type bool :description "Sign kernel modules with SHA-224")
     ("MICROCODE_INTEL" :type tristate :deprecated "6.4" :description "Intel microcode (now built-in)")
